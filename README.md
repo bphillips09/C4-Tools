@@ -8,6 +8,8 @@
 
 <b>Note:</b> This tool has been tested to work with OS 3.3.0 through OS 4.0.0 (X4). It may work on higher or lower versions.
 
+<b>Special Thanks:</b> The Composer and Director patching functionality in this Jailbreak tool were originally written by [@garrynewman](https://github.com/garrynewman) and [@black-ops-drivers](https://github.com/black-ops-drivers) for the [Control4 Jailbreak](https://github.com/garrynewman/Control4.Jailbreak/) tool. For more granular control over jailbreaking your system, that tool is a great resource.
+
 > ⚠️ **Disclaimer:** You use this tool at your own risk. There is no warranty or guarantee that it will work as expected. Using this tool could potentially break your Control4 system, void warranties, or cause data loss. The authors and contributors are not responsible for any damage or issues that may arise from its use.
 
 ## Support
