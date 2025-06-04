@@ -75,7 +75,7 @@ If this tool is helpful to you and you want to consider supporting its continued
 
 ## Running the App
 1. Download the [latest Release](https://github.com/bphillips09/C4-Tools/releases/latest) for your desired platform
-2. Open the application
+2. Unzip and Open the application
 - If you're on Windows, you'll need to run as Administrator to be able to modify Composer Pro
 - If you're on macOS, you may need to right-click the application and select `Open` to allow it to run
 
