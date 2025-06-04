@@ -1,0 +1,20 @@
+package_rename_config:
+  android:
+    app_name: C4 Tools
+    package_name: com.bp.c4tools
+
+  linux:
+    app_name: C4 Tools
+    package_name: com.bp.c4tools
+    exe_name: C4Tools
+
+  macos:
+    app_name: C4 Tools
+    package_name: com.bp.c4tools
+    copyright_notice: Copyright 2025 Brandon Phillips
+
+  windows:
+    app_name: C4 Tools
+    organization: Control4Tools
+    copyright_notice: Copyright 2025 Brandon Phillips
+    exe_name: C4Tools
