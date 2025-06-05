@@ -17,7 +17,6 @@ class SSHJailbreak {
   final Function(int, StepStatus, [String?]) updateStepStatus;
   SSHSocket? _sshSocket;
   SSHClient? _sshClient;
-  String? _sshPid;
   Directory? _tempCertDir;
 
   SSHJailbreak({
@@ -142,61 +141,12 @@ class SSHJailbreak {
         title: 'Restart SSH Service',
         subSteps: [
           JailbreakSubStep(
-            title: 'Find SSH Process',
-            description: 'Locating SSH daemon process',
-            execute: () async {
-              try {
-                final psUrl =
-                    'https://${directorIP}:443/api/v1/sysman/ssh?command=ps%20w';
-                final client = http.Client();
-
-                final psResponse = await client.get(
-                  Uri.parse(psUrl),
-                  headers: {
-                    'Accept': 'application/json',
-                    'Content-Type': 'application/json',
-                    'Authorization': 'Bearer ${jwtToken}',
-                  },
-                );
-
-                appLogger.t('PS Response: ${psResponse.body}');
-
-                if (psResponse.statusCode != 200) {
-                  throw Exception(
-                      'Failed to get SSH PID: ${psResponse.statusCode}');
-                }
-
-                final psOutput = psResponse.body;
-                final pidMatch =
-                    RegExp(r'(\d+)\s+root\s+\d+\s+S\s+sshd:.*/usr/sbin/sshd \[listener\]')
-                            .firstMatch(psOutput) ??
-                        RegExp(r'(\d+)\s+root\s+\d+\s+S\s+/usr/sbin/sshd')
-                            .firstMatch(psOutput);
-                if (pidMatch == null) {
-                  throw Exception('Could not find SSH PID');
-                }
-
-                _sshPid = pidMatch.group(1);
-                return true;
-              } catch (e) {
-                appLogger.e('Failed to find SSH process:', error: e);
-                throw e;
-              }
-            },
-          ),
-          JailbreakSubStep(
             title: 'Send Hang-Up',
             description: 'Sending Hang-Up signal to restart SSH',
             execute: () async {
               try {
-                if (_sshPid == null) {
-                  throw Exception('SSH PID not found');
-                }
-
-                appLogger.t(_sshPid);
-
                 final killUrl =
-                    'https://${directorIP}:443/api/v1/sysman/ssh?command=kill%20-HUP%20$_sshPid';
+                    'https://${directorIP}:443/api/v1/sysman/ssh?command=pkill%20-HUP%20sshd';
                 final client = http.Client();
 
                 appLogger.t(killUrl);
@@ -218,45 +168,6 @@ class SSHJailbreak {
                 return true;
               } catch (e) {
                 appLogger.e('Failed to send HUP signal:', error: e);
-                throw e;
-              }
-            },
-          ),
-          JailbreakSubStep(
-            title: 'Verify Restart',
-            description: 'Checking if SSH service restarted successfully',
-            execute: () async {
-              try {
-                // Wait a moment for the service to restart
-                await Future.delayed(const Duration(seconds: 2));
-
-                final psUrl =
-                    'https://${directorIP}:443/api/v1/sysman/ssh?command=ps%20w';
-                final client = http.Client();
-
-                final psResponse = await client.get(
-                  Uri.parse(psUrl),
-                  headers: {
-                    'Accept': 'application/json',
-                    'Content-Type': 'application/json',
-                    'Authorization': 'Bearer ${jwtToken}',
-                  },
-                );
-
-                if (psResponse.statusCode != 200) {
-                  throw Exception(
-                      'Failed to verify SSH restart: ${psResponse.statusCode}');
-                }
-
-                final psOutput = psResponse.body;
-                final pidMatch = RegExp(r'(\d+)\s+.*sshd').firstMatch(psOutput);
-                if (pidMatch == null) {
-                  throw Exception('SSH service did not restart properly');
-                }
-
-                return true;
-              } catch (e) {
-                appLogger.e('Failed to verify SSH restart:', error: e);
                 throw e;
               }
             },

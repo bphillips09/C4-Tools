@@ -182,15 +182,13 @@ class DirectorToolsGrid extends StatelessWidget {
     final columnsCount = (screenWidth / (cardWidth + gridSpacing)).floor();
     final actualColumns = columnsCount.clamp(2, 3);
 
-    // Check if Jailbreak should be disabled
-    bool isJailbreakDisabled = false;
+    bool isCoreOnX4 = false;
     if (directorVersion != null && directorUUID != null) {
-      // Strip out any suffixes like -res or -ind before parsing version
       final cleanVersion = directorVersion!.split('-')[0];
       final version = Version.parse(cleanVersion);
       if (version >= Version(4, 0, 0) &&
           directorUUID!.toLowerCase().contains('core')) {
-        isJailbreakDisabled = true;
+        isCoreOnX4 = true;
       }
     }
 
@@ -212,20 +210,36 @@ class DirectorToolsGrid extends StatelessWidget {
           descriptionSize: fixedDescriptionSize,
           padding: fixedPadding,
           onTap: () {
-            if (isJailbreakDisabled) {
+            if (isCoreOnX4) {
               showDialog<void>(
                 context: context,
                 builder: (BuildContext context) {
                   return AlertDialog(
-                    title: const Text('Jailbreak Unavailable'),
+                    title: const Text('Warning'),
                     content: const Text(
-                      'Jailbreak is temporarily disabled for Core controllers running X4.',
+                      'One-click Jailbreaking on Core-series controllers running X4 (>= 4.0.0) is untested and may not work. Do you want to proceed anyway?',
                     ),
                     actions: <Widget>[
                       TextButton(
-                        child: const Text('OK'),
+                        child: const Text('Cancel'),
                         onPressed: () {
                           Navigator.of(context).pop();
+                        },
+                      ),
+                      TextButton(
+                        child: const Text('Proceed'),
+                        onPressed: () {
+                          Navigator.of(context).pop();
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => JailbreakScreen(
+                                directorIP: directorIP,
+                                jwtToken: jwtToken!,
+                                directorVersion: directorVersion,
+                              ),
+                            ),
+                          );
                         },
                       ),
                     ],

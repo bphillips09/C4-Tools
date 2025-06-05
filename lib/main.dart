@@ -13,6 +13,9 @@ import 'models/data_models.dart';
 import 'ssdp/ssdp.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:logger/logger.dart' show Level;
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:version/version.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:pointycastle/export.dart'
     show
         MD5Digest,
@@ -123,8 +126,10 @@ class _C4ToolsState extends State<C4Tools> with SingleTickerProviderStateMixin {
   void initState() {
     super.initState();
     _startDiscovery();
-
     AppSettings.onDataCleared = onDataCleared;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      checkForUpdates();
+    });
   }
 
   @override
@@ -139,6 +144,61 @@ class _C4ToolsState extends State<C4Tools> with SingleTickerProviderStateMixin {
     AppSettings.onDataCleared = null;
 
     super.dispose();
+  }
+
+  Future<void> checkForUpdates() async {
+    try {
+      final packageInfo = await PackageInfo.fromPlatform();
+      final currentVersion = Version.parse(packageInfo.version);
+
+      final client = httpIOClient();
+      final response = await client.get(
+        Uri.parse(
+            'https://api.github.com/repos/bphillips09/C4-Tools/releases/latest'),
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final latestVersion =
+            Version.parse(data['tag_name'].toString().replaceAll('v', ''));
+        final downloadUrl = data['html_url'] as String;
+
+        if (latestVersion > currentVersion) {
+          if (context.mounted) {
+            showDialog(
+              context: context,
+              builder: (BuildContext context) {
+                return AlertDialog(
+                  title: const Text('Update Available'),
+                  content: Text(
+                      'A new version is available.\nDo you want to update?'
+                      '\n\nv${currentVersion.toString()} --> v${latestVersion.toString()}'),
+                  actions: <Widget>[
+                    TextButton(
+                      child: const Text('No'),
+                      onPressed: () {
+                        Navigator.of(context).pop();
+                      },
+                    ),
+                    TextButton(
+                      child: const Text('Yes'),
+                      onPressed: () async {
+                        Navigator.of(context).pop();
+                        if (await canLaunchUrl(Uri.parse(downloadUrl))) {
+                          await launchUrl(Uri.parse(downloadUrl));
+                        }
+                      },
+                    ),
+                  ],
+                );
+              },
+            );
+          }
+        }
+      }
+    } catch (e) {
+      appLogger.e('Error checking for updates', error: e);
+    }
   }
 
   int getHmacBlockSize(Digest digest) {

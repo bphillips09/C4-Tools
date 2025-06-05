@@ -472,8 +472,11 @@ class _JailbreakScreenState extends State<JailbreakScreen> {
                             ],
                           )
                         : ElevatedButton(
-                            onPressed:
-                                _isRunning ? null : _showConfirmationDialog,
+                            onPressed: _patchComposer ||
+                                    _patchDirector ||
+                                    _enableSSH
+                                ? (_isRunning ? null : _showConfirmationDialog)
+                                : null,
                             style: ElevatedButton.styleFrom(
                               shape: const CircleBorder(),
                               padding: const EdgeInsets.all(40),
