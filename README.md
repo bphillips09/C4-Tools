@@ -1,5 +1,8 @@
 # C4 Tools
 
+> # ❌ **Note:** Jailbreaking is temporarily disabled for **Core-series controllers running X4** while a workaround is being developed.
+
+
 <img src="assets/screenshots/C4Tools-DashWin.png" alt="C4 Tools Dashboard on Windows" height="250" /> <img src="assets/screenshots/C4Tools-DashMac.png" alt="C4 Tools Dashboard on Mac" height="250" /> <img src="assets/screenshots/C4Tools-DashDroid.png" alt="C4 Tools Dashboard on Android" height="250" />
 
 > _Screenshots of the app on Windows, macOS, and Android_
@@ -11,8 +14,6 @@
 <b>Special Thanks:</b> The Composer and Director patching functionality in this Jailbreak tool were originally written by [@garrynewman](https://github.com/garrynewman) and [@black-ops-drivers](https://github.com/black-ops-drivers) for the [Control4 Jailbreak](https://github.com/garrynewman/Control4.Jailbreak/) tool. For more granular control over jailbreaking your system, that tool is a great resource.
 
 > ⚠️ **Disclaimer:** You use this tool at your own risk. There is no warranty or guarantee that it will work as expected. Using this tool could potentially break your Control4 system, void warranties, or cause data loss. The authors and contributors are not responsible for any damage or issues that may arise from its use.
-
-> ❌ **Note:** Jailbreaking is temporarily disabled for **Core-series controllers running X4** while a workaround is being developed.
 
 ## Support
 
