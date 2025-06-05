@@ -149,8 +149,6 @@ class SSHJailbreak {
                     'https://${directorIP}:443/api/v1/sysman/ssh?command=pkill%20-HUP%20sshd';
                 final client = http.Client();
 
-                appLogger.t(killUrl);
-
                 final killResponse = await client.get(
                   Uri.parse(killUrl),
                   headers: {
@@ -159,6 +157,8 @@ class SSHJailbreak {
                     'Authorization': 'Bearer ${jwtToken}',
                   },
                 );
+
+                appLogger.t(killResponse.body);
 
                 if (killResponse.statusCode != 200) {
                   throw Exception(
