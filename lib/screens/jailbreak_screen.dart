@@ -12,11 +12,13 @@ import 'package:dartssh2/dartssh2.dart';
 class JailbreakScreen extends StatefulWidget {
   final String directorIP;
   final String? jwtToken;
+  final String? directorVersion;
 
   const JailbreakScreen({
     Key? key,
     required this.directorIP,
     required this.jwtToken,
+    required this.directorVersion,
   }) : super(key: key);
 
   @override
@@ -44,6 +46,7 @@ class _JailbreakScreenState extends State<JailbreakScreen> {
       directorIP: widget.directorIP,
       jwtToken: widget.jwtToken,
       updateStepStatus: _updateStepStatus,
+      directorVersion: widget.directorVersion,
     );
 
     _certPatch = CertificatePatch(

@@ -12,6 +12,7 @@ import 'package:c4_tools/main.dart' show MainApp;
 import 'package:c4_tools/screens/jailbreak_screen.dart';
 import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
+import 'package:version/version.dart';
 
 class DirectorTools extends StatelessWidget {
   final String? jwtToken;
@@ -23,6 +24,8 @@ class DirectorTools extends StatelessWidget {
   final bool isLoading;
   final VoidCallback onConnect;
   final TextEditingController ipController;
+  final String? directorVersion;
+  final String? directorUUID;
 
   const DirectorTools({
     Key? key,
@@ -35,6 +38,8 @@ class DirectorTools extends StatelessWidget {
     required this.isLoading,
     required this.onConnect,
     required this.ipController,
+    required this.directorVersion,
+    required this.directorUUID,
   }) : super(key: key);
 
   @override
@@ -53,6 +58,8 @@ class DirectorTools extends StatelessWidget {
             directorIP: directorIP,
             successfulPassword: successfulPassword,
             jwtToken: jwtToken,
+            directorVersion: directorVersion,
+            directorUUID: directorUUID,
           ),
         ],
       ],
@@ -64,12 +71,16 @@ class DirectorToolsGrid extends StatelessWidget {
   final String directorIP;
   final String? successfulPassword;
   final String? jwtToken;
+  final String? directorVersion;
+  final String? directorUUID;
 
   const DirectorToolsGrid({
     Key? key,
     required this.directorIP,
     required this.successfulPassword,
     required this.jwtToken,
+    required this.directorVersion,
+    required this.directorUUID,
   }) : super(key: key);
 
   Future<bool> _refreshNavigators(BuildContext context) async {
@@ -171,6 +182,18 @@ class DirectorToolsGrid extends StatelessWidget {
     final columnsCount = (screenWidth / (cardWidth + gridSpacing)).floor();
     final actualColumns = columnsCount.clamp(2, 3);
 
+    // Check if Jailbreak should be disabled
+    bool isJailbreakDisabled = false;
+    if (directorVersion != null && directorUUID != null) {
+      // Strip out any suffixes like -res or -ind before parsing version
+      final cleanVersion = directorVersion!.split('-')[0];
+      final version = Version.parse(cleanVersion);
+      if (version >= Version(4, 0, 0) &&
+          directorUUID!.toLowerCase().contains('core')) {
+        isJailbreakDisabled = true;
+      }
+    }
+
     return GridView.count(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
@@ -189,15 +212,38 @@ class DirectorToolsGrid extends StatelessWidget {
           descriptionSize: fixedDescriptionSize,
           padding: fixedPadding,
           onTap: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (context) => JailbreakScreen(
-                  directorIP: directorIP,
-                  jwtToken: jwtToken!,
+            if (isJailbreakDisabled) {
+              showDialog<void>(
+                context: context,
+                builder: (BuildContext context) {
+                  return AlertDialog(
+                    title: const Text('Jailbreak Unavailable'),
+                    content: const Text(
+                      'Jailbreak is temporarily disabled for Core controllers running X4.',
+                    ),
+                    actions: <Widget>[
+                      TextButton(
+                        child: const Text('OK'),
+                        onPressed: () {
+                          Navigator.of(context).pop();
+                        },
+                      ),
+                    ],
+                  );
+                },
+              );
+            } else {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => JailbreakScreen(
+                    directorIP: directorIP,
+                    jwtToken: jwtToken!,
+                    directorVersion: directorVersion,
+                  ),
                 ),
-              ),
-            );
+              );
+            }
           },
         ),
         _buildToolCard(
@@ -340,36 +386,38 @@ class DirectorToolsGrid extends StatelessWidget {
     required double titleSize,
     required double descriptionSize,
     required double padding,
-    required VoidCallback onTap,
+    required VoidCallback? onTap,
+    String? tooltip,
   }) {
     return Card(
-      elevation: 2,
       child: InkWell(
         onTap: onTap,
-        child: Padding(
-          padding: EdgeInsets.all(padding),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon, size: iconSize),
-              const SizedBox(height: 8),
-              Text(
-                title,
-                style: TextStyle(
-                  fontSize: titleSize,
-                  fontWeight: FontWeight.bold,
+        child: Tooltip(
+          message: tooltip ?? '',
+          child: Padding(
+            padding: EdgeInsets.all(padding),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, size: iconSize),
+                const SizedBox(height: 8),
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: titleSize,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
-                textAlign: TextAlign.center,
-              ),
-              Text(
-                description,
-                style: TextStyle(
-                  fontSize: descriptionSize,
-                  color: Colors.grey,
+                const SizedBox(height: 4),
+                Text(
+                  description,
+                  style: TextStyle(
+                    fontSize: descriptionSize,
+                    color: Theme.of(context).textTheme.bodySmall?.color,
+                  ),
                 ),
-                textAlign: TextAlign.center,
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

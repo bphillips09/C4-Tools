@@ -108,6 +108,7 @@ class _C4ToolsState extends State<C4Tools> with SingleTickerProviderStateMixin {
   String? _successfulPassword;
   String? _directorVersion;
   String? _directorName;
+  String? _directorUUID;
   List<SsdpResponseInfo> _discoveredDevices = [];
   bool _isDiscovering = false;
   SsdpClient? _sddpClient;
@@ -554,6 +555,7 @@ class _C4ToolsState extends State<C4Tools> with SingleTickerProviderStateMixin {
       _successfulPassword = null;
       _directorVersion = null;
       _directorName = null;
+      _directorUUID = null;
       _manualPasswordController.clear();
     });
 
@@ -584,6 +586,7 @@ class _C4ToolsState extends State<C4Tools> with SingleTickerProviderStateMixin {
                 getDirectorRootPassword(platformStatus.directorMAC!);
             _directorVersion = platformStatus.directorVersion;
             _directorName = platformStatus.directorName;
+            _directorUUID = platformStatus.directorUUID;
           });
 
           // Load credentials for this director if available
@@ -649,6 +652,7 @@ class _C4ToolsState extends State<C4Tools> with SingleTickerProviderStateMixin {
       _successfulPassword = null;
       _directorVersion = null;
       _directorName = null;
+      _directorUUID = null;
       _errorMessage = null;
     });
 
@@ -837,6 +841,8 @@ class _C4ToolsState extends State<C4Tools> with SingleTickerProviderStateMixin {
                 isLoading: _isLoading,
                 onConnect: _connectToDirector,
                 ipController: _ipController,
+                directorVersion: _directorVersion,
+                directorUUID: _directorUUID,
               ),
             ),
       bottomNavigationBar: _jwtToken != null

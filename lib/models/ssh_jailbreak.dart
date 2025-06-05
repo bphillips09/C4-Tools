@@ -1,6 +1,7 @@
 import 'package:c4_tools/models/certificate_patch.dart' show CertificatePatch;
 import 'package:http/http.dart' as http;
 import 'package:dartssh2/dartssh2.dart';
+import 'package:version/version.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
@@ -12,6 +13,7 @@ import 'package:c4_tools/services/app_logger.dart' show appLogger;
 class SSHJailbreak {
   final String directorIP;
   final String? jwtToken;
+  final String? directorVersion;
   final Function(int, StepStatus, [String?]) updateStepStatus;
   SSHSocket? _sshSocket;
   SSHClient? _sshClient;
@@ -22,12 +24,13 @@ class SSHJailbreak {
     required this.directorIP,
     required this.jwtToken,
     required this.updateStepStatus,
+    required this.directorVersion,
   });
 
   List<JailbreakStep> createSteps() {
-    // TODO: If it's < 4.0.0, we can use the API to reset the password
+    List<JailbreakStep> steps = [];
 
-    final steps = <JailbreakStep>[
+    final x4Steps = <JailbreakStep>[
       SSHStep(
         title: 'Get Writable Driver',
         subSteps: [
@@ -156,6 +159,8 @@ class SSHJailbreak {
                   },
                 );
 
+                appLogger.t('PS Response: ${psResponse.body}');
+
                 if (psResponse.statusCode != 200) {
                   throw Exception(
                       'Failed to get SSH PID: ${psResponse.statusCode}');
@@ -259,70 +264,124 @@ class SSHJailbreak {
         ],
         updateStepStatus: updateStepStatus,
       ),
-      SSHStep(
-        title: 'Verify SSH Access',
-        subSteps: [
-          JailbreakSubStep(
-            title: 'Test Connection',
-            description: 'Attempting SSH connection',
-            execute: () async {
-              try {
-                await _ensureSSHConnection();
-                appLogger.i('Using existing SSH connection for verification');
-
-                final session = await _sshClient!.shell(
-                  pty: SSHPtyConfig(
-                    width: 80,
-                    height: 24,
-                  ),
-                );
-
-                Completer<bool> resultCompleter = Completer<bool>();
-                String result = '';
-
-                final stdoutSubscription = session.stdout.listen(
-                  (data) {
-                    result += String.fromCharCodes(data);
-                    if (result.contains('root')) {
-                      resultCompleter.complete(true);
-                    }
-                  },
-                  onError: (error) {
-                    appLogger.e('Error in stdout stream:', error: error);
-                    resultCompleter.complete(false);
-                  },
-                );
-
-                session.write(Uint8List.fromList('whoami\n'.codeUnits));
-
-                final success = await resultCompleter.future.timeout(
-                  const Duration(seconds: 5),
-                  onTimeout: () {
-                    appLogger.w('SSH verification timed out');
-                    return false;
-                  },
-                );
-
-                stdoutSubscription.cancel();
-                session.close();
-
-                if (success) {
-                  appLogger.i('Successfully verified SSH access');
-                } else {
-                  appLogger.w('Failed to verify SSH access');
-                }
-
-                return success;
-              } catch (e) {
-                appLogger.e('SSH verification failed:', error: e);
-                return false;
-              }
-            },
-          ),
-        ],
-        updateStepStatus: updateStepStatus,
-      ),
     ];
+
+    // If version is < 4.0.0, we can use the API to reset the password
+    if (directorVersion != null) {
+      final cleanVersion = directorVersion!.split('-')[0];
+      final version = Version.parse(cleanVersion);
+      if (version < Version(4, 0, 0)) {
+        steps.add(
+          SSHStep(
+            title: 'Reset Password',
+            subSteps: [
+              JailbreakSubStep(
+                title: 'Reset Password',
+                description: 'Using API to reset root password',
+                execute: () async {
+                  try {
+                    final url = 'https://${directorIP}:443/api/v1/password';
+                    final client = http.Client();
+
+                    final response = await client.post(
+                      Uri.parse(url),
+                      headers: {
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ${jwtToken}',
+                      },
+                      body: jsonEncode({
+                        'oldPassword': 't0talc0ntr0l4!',
+                        'newPassword': 't0talc0ntr0l4!',
+                      }),
+                    );
+
+                    if (response.statusCode != 200) {
+                      throw Exception(
+                          'Failed to reset password: ${response.statusCode}');
+                    }
+
+                    return true;
+                  } catch (e) {
+                    appLogger.e('Failed to reset password:', error: e);
+                    return false;
+                  }
+                },
+              ),
+            ],
+            updateStepStatus: updateStepStatus,
+          ),
+        );
+      } else {
+        steps.addAll(x4Steps);
+      }
+    } else {
+      steps.addAll(x4Steps);
+    }
+
+    steps.add(SSHStep(
+      title: 'Verify SSH Access',
+      subSteps: [
+        JailbreakSubStep(
+          title: 'Test Connection',
+          description: 'Attempting SSH connection',
+          execute: () async {
+            try {
+              await _ensureSSHConnection();
+              appLogger.i('Using existing SSH connection for verification');
+
+              final session = await _sshClient!.shell(
+                pty: SSHPtyConfig(
+                  width: 80,
+                  height: 24,
+                ),
+              );
+
+              Completer<bool> resultCompleter = Completer<bool>();
+              String result = '';
+
+              final stdoutSubscription = session.stdout.listen(
+                (data) {
+                  result += String.fromCharCodes(data);
+                  if (result.contains('root')) {
+                    resultCompleter.complete(true);
+                  }
+                },
+                onError: (error) {
+                  appLogger.e('Error in stdout stream:', error: error);
+                  resultCompleter.complete(false);
+                },
+              );
+
+              session.write(Uint8List.fromList('whoami\n'.codeUnits));
+
+              final success = await resultCompleter.future.timeout(
+                const Duration(seconds: 5),
+                onTimeout: () {
+                  appLogger.w('SSH verification timed out');
+                  return false;
+                },
+              );
+
+              stdoutSubscription.cancel();
+              session.close();
+
+              if (success) {
+                appLogger.i('Successfully verified SSH access');
+              } else {
+                appLogger.w('Failed to verify SSH access');
+              }
+
+              return success;
+            } catch (e) {
+              appLogger.e('SSH verification failed:', error: e);
+              return false;
+            }
+          },
+        ),
+      ],
+      updateStepStatus: updateStepStatus,
+    ));
 
     // Only add certificate patching step on Windows
     if (Platform.isWindows) {

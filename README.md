@@ -12,6 +12,8 @@
 
 > ⚠️ **Disclaimer:** You use this tool at your own risk. There is no warranty or guarantee that it will work as expected. Using this tool could potentially break your Control4 system, void warranties, or cause data loss. The authors and contributors are not responsible for any damage or issues that may arise from its use.
 
+> ❌ **Note:** Jailbreaking is temporarily disabled for **Core-series controllers running X4** while a workaround is being developed.
+
 ## Support
 
 If this tool is helpful to you and you want to consider supporting its continued development:<br>
