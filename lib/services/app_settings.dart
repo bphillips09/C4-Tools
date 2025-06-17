@@ -75,6 +75,9 @@ class AppSettings {
       _cachedSettings = {
         'knownDirectors': knownDirectors,
         'directorIPs': directorIPs,
+        'defaultSshUsername': prefs.getString('default_ssh_username') ?? 'root',
+        'defaultSshPassword':
+            prefs.getString('default_ssh_password') ?? 't0talc0ntr0l4!',
       };
 
       appLogger.d(
@@ -84,6 +87,8 @@ class AppSettings {
       _cachedSettings = {
         'knownDirectors': [],
         'directorIPs': {},
+        'defaultSshUsername': 'root',
+        'defaultSshPassword': 't0talc0ntr0l4!',
       };
     }
   }
@@ -484,6 +489,14 @@ class AppSettings {
                 },
               ),
               ListTile(
+                leading: const Icon(Icons.terminal),
+                title: const Text('Default SSH Credentials'),
+                onTap: () {
+                  Navigator.pop(context);
+                  showSshCredentialsDialog(context);
+                },
+              ),
+              ListTile(
                 leading: const Icon(Icons.delete_forever),
                 title: const Text('Clear Data'),
                 onTap: () {
@@ -731,5 +744,107 @@ class AppSettings {
       appLogger.e('Error clearing log file', error: e);
       return false;
     }
+  }
+
+  Future<void> setDefaultSshCredentials(
+      String username, String password) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('default_ssh_username', username);
+      await prefs.setString('default_ssh_password', password);
+
+      _cachedSettings['defaultSshUsername'] = username;
+      _cachedSettings['defaultSshPassword'] = password;
+
+      appLogger.i('Default SSH credentials updated');
+    } catch (e) {
+      appLogger.e('Error saving default SSH credentials', error: e);
+    }
+  }
+
+  String getDefaultSshUsername() {
+    return _cachedSettings['defaultSshUsername'] as String? ?? 'root';
+  }
+
+  String getDefaultSshPassword() {
+    return _cachedSettings['defaultSshPassword'] as String? ?? 't0talc0ntr0l4!';
+  }
+
+  static Future<void> showSshCredentialsDialog(BuildContext context) async {
+    final usernameController =
+        TextEditingController(text: instance.getDefaultSshUsername());
+    final passwordController =
+        TextEditingController(text: instance.getDefaultSshPassword());
+    bool obscurePassword = true;
+
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: const Text('Default SSH Credentials'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: usernameController,
+                    decoration: const InputDecoration(
+                      labelText: 'Username',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: passwordController,
+                    decoration: InputDecoration(
+                      labelText: 'Password',
+                      border: const OutlineInputBorder(),
+                      suffixIcon: IconButton(
+                        icon: Icon(
+                          obscurePassword
+                              ? Icons.visibility
+                              : Icons.visibility_off,
+                        ),
+                        onPressed: () {
+                          setState(() {
+                            obscurePassword = !obscurePassword;
+                          });
+                        },
+                      ),
+                    ),
+                    obscureText: obscurePassword,
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  child: const Text('Cancel'),
+                  onPressed: () {
+                    Navigator.pop(context);
+                  },
+                ),
+                TextButton(
+                  child: const Text('Save'),
+                  onPressed: () async {
+                    await instance.setDefaultSshCredentials(
+                      usernameController.text,
+                      passwordController.text,
+                    );
+                    if (context.mounted) {
+                      Navigator.pop(context);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                            content: Text('SSH credentials updated')),
+                      );
+                    }
+                  },
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 }

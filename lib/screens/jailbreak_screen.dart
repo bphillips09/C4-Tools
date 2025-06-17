@@ -84,8 +84,8 @@ class _JailbreakScreenState extends State<JailbreakScreen> {
 
       final client = SSHClient(
         socket,
-        username: 'root',
-        onPasswordRequest: () => 't0talc0ntr0l4!',
+        username: AppSettings.instance.getDefaultSshUsername(),
+        onPasswordRequest: () => AppSettings.instance.getDefaultSshPassword(),
       );
 
       // Try to verify existing connection
@@ -706,8 +706,8 @@ class _JailbreakScreenState extends State<JailbreakScreen> {
 
       final client = SSHClient(
         socket,
-        username: 'root',
-        onPasswordRequest: () => 't0talc0ntr0l4!',
+        username: AppSettings.instance.getDefaultSshUsername(),
+        onPasswordRequest: () => AppSettings.instance.getDefaultSshPassword(),
       );
 
       try {

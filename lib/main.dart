@@ -101,7 +101,6 @@ class _C4ToolsState extends State<C4Tools> with SingleTickerProviderStateMixin {
   final TextEditingController _manualPasswordController =
       TextEditingController();
   static const String _salt = "STlqJGd1fTkjI25CWz1hK1YuMURseXA/UnU5QGp6cF4=";
-  static const String _defaultPassword = "t0talc0ntr0l4!";
   static const String _apiKey = "78f6791373d61bea49fdb9fb8897f1f3af193f11";
   bool _isLoading = false;
   String? _errorMessage;
@@ -665,7 +664,8 @@ class _C4ToolsState extends State<C4Tools> with SingleTickerProviderStateMixin {
           }
 
           // Then try default password
-          if (await _tryAuthentication(_defaultPassword)) {
+          if (await _tryAuthentication(
+              AppSettings.instance.getDefaultSshPassword())) {
             _sddpClient?.stopDiscovery();
             return;
           }

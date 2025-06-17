@@ -9,6 +9,7 @@ import 'jailbreak_step.dart';
 import 'package:path_provider/path_provider.dart';
 import 'dart:io';
 import 'package:c4_tools/services/app_logger.dart' show appLogger;
+import 'package:c4_tools/services/app_settings.dart';
 
 class SSHJailbreak {
   final String directorIP;
@@ -254,7 +255,8 @@ class SSHJailbreak {
               final stdoutSubscription = session.stdout.listen(
                 (data) {
                   result += String.fromCharCodes(data);
-                  if (result.contains('root')) {
+                  if (result
+                      .contains(AppSettings.instance.getDefaultSshUsername())) {
                     resultCompleter.complete(true);
                   }
                 },
@@ -700,8 +702,9 @@ class SSHJailbreak {
           _sshSocket = await SSHSocket.connect(directorIP, 22);
           _sshClient = SSHClient(
             _sshSocket!,
-            username: 'root',
-            onPasswordRequest: () => 't0talc0ntr0l4!',
+            username: AppSettings.instance.getDefaultSshUsername(),
+            onPasswordRequest: () =>
+                AppSettings.instance.getDefaultSshPassword(),
           );
 
           final session = await _sshClient!.shell(

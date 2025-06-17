@@ -13,6 +13,7 @@ import 'package:c4_tools/screens/jailbreak_screen.dart';
 import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
 import 'package:version/version.dart';
+import 'package:c4_tools/services/app_settings.dart';
 
 class DirectorTools extends StatelessWidget {
   final String? jwtToken;
@@ -270,8 +271,7 @@ class DirectorToolsGrid extends StatelessWidget {
           descriptionSize: fixedDescriptionSize,
           padding: fixedPadding,
           onTap: () {
-            // Default to the standard password
-            String sshPassword = 't0talc0ntr0l4!';
+            String sshPassword = AppSettings.instance.getDefaultSshPassword();
 
             // If we have a successful password, use that instead
             if (successfulPassword != null) {
@@ -285,7 +285,7 @@ class DirectorToolsGrid extends StatelessWidget {
               MaterialPageRoute(
                 builder: (context) => SSHScreen(
                   host: directorIP,
-                  username: 'root',
+                  username: AppSettings.instance.getDefaultSshUsername(),
                   password: sshPassword,
                 ),
               ),
