@@ -1,7 +1,6 @@
 import 'package:c4_tools/models/certificate_patch.dart' show CertificatePatch;
 import 'package:http/http.dart' as http;
 import 'package:dartssh2/dartssh2.dart';
-import 'package:version/version.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
@@ -178,11 +177,13 @@ class SSHJailbreak {
       ),
     ];
 
-    // If version is < 4.0.0, we can use the API to reset the password
+    // If version is < 3.4.3.741643, we can use the API to reset the password
     if (directorVersion != null) {
-      final cleanVersion = directorVersion!.split('-')[0];
-      final version = Version.parse(cleanVersion);
-      if (version < Version(4, 0, 0)) {
+      appLogger.i('Director Version: $directorVersion');
+      const threshold = [3, 4, 3, 741643];
+      if (_isVersionAtLeast(directorVersion, threshold)) {
+        steps.addAll(x4Steps);
+      } else {
         steps.add(
           SSHStep(
             title: 'Reset Password',
@@ -224,8 +225,6 @@ class SSHJailbreak {
             updateStepStatus: updateStepStatus,
           ),
         );
-      } else {
-        steps.addAll(x4Steps);
       }
     } else {
       steps.addAll(x4Steps);
@@ -534,6 +533,38 @@ class SSHJailbreak {
     appLogger.t('Step Titles: ${steps.map((step) => step.title).join(', ')}');
 
     return steps;
+  }
+
+  // Version comparison helpers
+  List<int> _parseVersionComponents(String? versionString) {
+    if (versionString == null || versionString.trim().isEmpty) {
+      return [];
+    }
+    final base = versionString.split('-').first;
+    final parts = base.split('.');
+    final List<int> components = [];
+    for (final part in parts) {
+      final parsed = int.tryParse(part) ?? 0;
+      components.add(parsed);
+    }
+    while (components.length < 4) {
+      components.add(0);
+    }
+    if (components.length > 4) {
+      return components.sublist(0, 4);
+    }
+    return components;
+  }
+
+  bool _isVersionAtLeast(String? versionString, List<int> threshold) {
+    final ver = _parseVersionComponents(versionString);
+    if (ver.isEmpty) return false;
+    final maxLen = threshold.length;
+    for (var i = 0; i < maxLen; i++) {
+      if (ver[i] > threshold[i]) return true;
+      if (ver[i] < threshold[i]) return false;
+    }
+    return true; // equal
   }
 
   Future<String?> _getWritableDriver() async {
