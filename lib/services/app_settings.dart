@@ -9,6 +9,7 @@ import 'package:c4_tools/services/app_logger.dart' show AppLogger, appLogger;
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:android_intent_plus/android_intent.dart';
 import 'package:open_file/open_file.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 class AppSettings {
   static final AppSettings _instance = AppSettings._internal();
@@ -507,6 +508,20 @@ class AppSettings {
             ],
           ),
           actions: [
+            FutureBuilder<PackageInfo>(
+              future: PackageInfo.fromPlatform(),
+              builder: (context, snapshot) {
+                final text =
+                    snapshot.hasData ? 'v${snapshot.data!.version}' : '';
+                return Align(
+                  alignment: Alignment.center,
+                  child: Text(
+                    text,
+                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                );
+              },
+            ),
             TextButton(
               child: const Text('Close'),
               onPressed: () {
