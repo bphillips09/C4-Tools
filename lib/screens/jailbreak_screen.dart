@@ -2,6 +2,7 @@ import 'package:c4_tools/main.dart' show MainApp;
 import 'package:c4_tools/services/app_logger.dart' show appLogger;
 import 'package:c4_tools/services/app_settings.dart';
 import 'package:flutter/material.dart';
+import 'package:c4_tools/services/telemetry_service.dart';
 import '../models/jailbreak_step.dart';
 import 'dart:async';
 import '../models/ssh_jailbreak.dart';
@@ -224,6 +225,11 @@ class _JailbreakScreenState extends State<JailbreakScreen> {
           MainApp.showSnackBar(
               'Jailbreak failed: ${step.currentSubStep ?? "Unknown error"}',
               isError: true);
+          Telemetry.event("jailbreak_failed", {
+            "step_title": step.title,
+            "step_status": step.status.name,
+            "step_current_sub_step": step.currentSubStep ?? 'null',
+          });
           return;
         }
 
@@ -239,6 +245,8 @@ class _JailbreakScreenState extends State<JailbreakScreen> {
 
       appLogger.i('\nJailbreak completed successfully!');
       MainApp.showSnackBar('Success!');
+
+      Telemetry.event("jailbreak_success");
 
       if (_patchDirector) {
         await showDialog<void>(
@@ -274,6 +282,10 @@ class _JailbreakScreenState extends State<JailbreakScreen> {
           error: e, stackTrace: stackTrace);
       // Don't clear the log, just show the error
       MainApp.showSnackBar('Jailbreak failed: $e', isError: true);
+      Telemetry.event("jailbreak_failed", {
+        "step_error": e.toString(),
+        "step_error_stack_trace": stackTrace.toString(),
+      });
     } finally {
       appLogger.i('\nSetting _isRunning to false');
       setState(() {

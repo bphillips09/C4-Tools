@@ -529,43 +529,33 @@ class AppSettings {
           title: const Text('Log Level'),
           content: StatefulBuilder(
             builder: (context, setState) {
-              return Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('Select the minimum log level to record:'),
-                  const SizedBox(height: 16),
-                  _buildLogLevelRadio(context, Level.trace, selectedLevel,
-                      (value) {
-                    setState(() => selectedLevel = value);
-                  }),
-                  _buildLogLevelRadio(context, Level.debug, selectedLevel,
-                      (value) {
-                    setState(() => selectedLevel = value);
-                  }),
-                  _buildLogLevelRadio(context, Level.info, selectedLevel,
-                      (value) {
-                    setState(() => selectedLevel = value);
-                  }),
-                  _buildLogLevelRadio(context, Level.warning, selectedLevel,
-                      (value) {
-                    setState(() => selectedLevel = value);
-                  }),
-                  _buildLogLevelRadio(context, Level.error, selectedLevel,
-                      (value) {
-                    setState(() => selectedLevel = value);
-                  }),
-                  _buildLogLevelRadio(context, Level.fatal, selectedLevel,
-                      (value) {
-                    setState(() => selectedLevel = value);
-                  }),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Description: ${getLogLevelDescription(selectedLevel)}',
-                    style: const TextStyle(
-                        fontStyle: FontStyle.italic, fontSize: 12),
-                  ),
-                ],
+              return RadioGroup<Level>(
+                groupValue: selectedLevel,
+                onChanged: (Level? newLevel) {
+                  if (newLevel != null) {
+                    setState(() => selectedLevel = newLevel);
+                  }
+                },
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Select the minimum log level to record:'),
+                    const SizedBox(height: 16),
+                    _buildLogLevelRadio(context, Level.trace),
+                    _buildLogLevelRadio(context, Level.debug),
+                    _buildLogLevelRadio(context, Level.info),
+                    _buildLogLevelRadio(context, Level.warning),
+                    _buildLogLevelRadio(context, Level.error),
+                    _buildLogLevelRadio(context, Level.fatal),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Description: ${getLogLevelDescription(selectedLevel)}',
+                      style: const TextStyle(
+                          fontStyle: FontStyle.italic, fontSize: 12),
+                    ),
+                  ],
+                ),
               );
             },
           ),
@@ -595,17 +585,10 @@ class AppSettings {
     );
   }
 
-  static Widget _buildLogLevelRadio(BuildContext context, Level level,
-      Level groupValue, Function(Level) onChanged) {
+  static Widget _buildLogLevelRadio(BuildContext context, Level level) {
     return RadioListTile<Level>(
       title: Text(logLevelToString(level)),
       value: level,
-      groupValue: groupValue,
-      onChanged: (Level? value) {
-        if (value != null) {
-          onChanged(value);
-        }
-      },
       dense: true,
     );
   }

@@ -12,7 +12,6 @@ import 'package:c4_tools/main.dart' show MainApp;
 import 'package:c4_tools/screens/jailbreak_screen.dart';
 import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
-import 'package:version/version.dart';
 import 'package:c4_tools/services/app_settings.dart';
 
 class DirectorTools extends StatelessWidget {
@@ -74,6 +73,15 @@ class DirectorToolsGrid extends StatelessWidget {
   final String? jwtToken;
   final String? directorVersion;
   final String? directorUUID;
+
+  // Fixed sizes based on default window size
+  static const double fixedIconSize = 48.0;
+  static const double fixedTitleSize = 16.0;
+  static const double fixedDescriptionSize = 14.0;
+  static const double fixedPadding = 16.0;
+  static const double cardWidth = 200.0;
+  static const double cardHeight = 200.0;
+  static const double gridSpacing = 8.0;
 
   const DirectorToolsGrid({
     Key? key,
@@ -170,26 +178,14 @@ class DirectorToolsGrid extends StatelessWidget {
       );
     }
 
-    // Fixed sizes based on default window size
-    const double fixedIconSize = 48.0;
-    const double fixedTitleSize = 16.0;
-    const double fixedDescriptionSize = 14.0;
-    const double fixedPadding = 16.0;
-    const double cardWidth = 200.0;
-    const double cardHeight = 200.0;
-    const double gridSpacing = 8.0;
-
     final screenWidth = MediaQuery.of(context).size.width;
     final columnsCount = (screenWidth / (cardWidth + gridSpacing)).floor();
     final actualColumns = columnsCount.clamp(2, 3);
 
-    bool isCoreOnX4 = false;
+    bool isCore = false;
     if (directorVersion != null && directorUUID != null) {
-      final cleanVersion = directorVersion!.split('-')[0];
-      final version = Version.parse(cleanVersion);
-      if (version >= Version(4, 0, 0) &&
-          directorUUID!.toLowerCase().contains('core')) {
-        isCoreOnX4 = true;
+      if (directorUUID!.toLowerCase().contains('core')) {
+        isCore = true;
       }
     }
 
@@ -211,14 +207,14 @@ class DirectorToolsGrid extends StatelessWidget {
           descriptionSize: fixedDescriptionSize,
           padding: fixedPadding,
           onTap: () {
-            if (isCoreOnX4) {
+            if (isCore) {
               showDialog<void>(
                 context: context,
                 builder: (BuildContext context) {
                   return AlertDialog(
                     title: const Text('Warning'),
                     content: const Text(
-                      'One-click Jailbreaking on Core-series controllers running X4 (>= 4.0.0) is untested and may not work. Do you want to proceed anyway?',
+                      'One-click Jailbreaking on Core-series controllers is unstable and may not work. Do you want to proceed anyway?',
                     ),
                     actions: <Widget>[
                       TextButton(

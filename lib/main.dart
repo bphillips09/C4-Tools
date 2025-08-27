@@ -2,11 +2,13 @@ import 'dart:io';
 import 'package:c4_tools/services/app_logger.dart' show AppLogger, appLogger;
 import 'package:c4_tools/services/app_settings.dart';
 import 'package:c4_tools/tools/http_client.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'package:pointycastle/key_derivators/pbkdf2.dart';
 import 'package:pointycastle/macs/hmac.dart';
 import 'package:pointycastle/pointycastle.dart' hide Padding;
+import 'services/telemetry_service.dart';
 import 'dart:async';
 import 'tools/director_tools.dart';
 import 'models/data_models.dart';
@@ -25,9 +27,15 @@ import 'package:pointycastle/export.dart'
         SHA384Digest,
         SHA512Digest;
 
+const String _salt = "STlqJGd1fTkjI25CWz1hK1YuMURseXA/UnU5QGp6cF4=";
+const String _apiKey = "78f6791373d61bea49fdb9fb8897f1f3af193f11";
+const String _appID = "A-US-8423251349";
+
 void main() async {
   HttpOverrides.global = WebOverrides();
   WidgetsFlutterBinding.ensureInitialized();
+
+  await Telemetry.initialize(_appID, debug: kDebugMode);
 
   await AppLogger.instance.init();
 
@@ -100,8 +108,6 @@ class _C4ToolsState extends State<C4Tools> with SingleTickerProviderStateMixin {
   final TextEditingController _ipController = TextEditingController();
   final TextEditingController _manualPasswordController =
       TextEditingController();
-  static const String _salt = "STlqJGd1fTkjI25CWz1hK1YuMURseXA/UnU5QGp6cF4=";
-  static const String _apiKey = "78f6791373d61bea49fdb9fb8897f1f3af193f11";
   bool _isLoading = false;
   String? _errorMessage;
   String? _jwtToken;
@@ -124,6 +130,8 @@ class _C4ToolsState extends State<C4Tools> with SingleTickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
+    Telemetry.event("app_started");
+
     _startDiscovery();
     AppSettings.onDataCleared = onDataCleared;
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -161,6 +169,9 @@ class _C4ToolsState extends State<C4Tools> with SingleTickerProviderStateMixin {
         final latestVersion =
             Version.parse(data['tag_name'].toString().replaceAll('v', ''));
         final downloadUrl = data['html_url'] as String;
+
+        appLogger.i('Current version: $currentVersion');
+        appLogger.i('Latest version: $latestVersion');
 
         if (latestVersion > currentVersion) {
           if (context.mounted) {
@@ -647,6 +658,23 @@ class _C4ToolsState extends State<C4Tools> with SingleTickerProviderStateMixin {
             _directorName = platformStatus.directorName;
             _directorUUID = platformStatus.directorUUID;
           });
+
+          appLogger.d('Director Version: $_directorVersion');
+          appLogger.d('Director UUID: $_directorUUID');
+
+          String anonymousDirectorType = 'Unknown';
+          if (_directorUUID != null && _directorUUID!.contains('-')) {
+            try {
+              anonymousDirectorType = _directorUUID!.split('-')[0];
+            } catch (_) {}
+          }
+
+          Telemetry.setProperties({
+            'director_version': _directorVersion,
+            'anonymous_director_type': anonymousDirectorType,
+          });
+
+          Telemetry.event("director_connected");
 
           // Load credentials for this director if available
           await _loadDirectorCredentials();

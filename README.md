@@ -12,7 +12,7 @@
 
 > ⚠️ **Disclaimer:** You use this tool at your own risk. There is no warranty or guarantee that it will work as expected. Using this tool could potentially break your Control4 system, void warranties, or cause data loss. The authors and contributors are not responsible for any damage or issues that may arise from its use.
 
-> ❌ **Note:** One-click Jailbreaking is untested for **Core-series controllers running X4**.
+> ❌ **Note:** One-click Jailbreaking may be unstable for **Core-series controllers**.
 
 ## Support
 
