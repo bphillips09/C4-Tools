@@ -18,6 +18,17 @@ class SSHJailbreak {
   SSHSocket? _sshSocket;
   SSHClient? _sshClient;
   Directory? _tempCertDir;
+  static const List<String> _rootSshKeyFiles = [
+    'ssh_host_rsa_key',
+    'ssh_host_rsa_key.pub',
+    'ssh_host_ed25519_key',
+    'ssh_host_ed25519_key.pub',
+  ];
+  static const List<String> _remoteCertChainPaths = [
+    '/etc/openvpn/clientca-prod.pem',
+    '/opt/control4/etc/ssl/certs/clientca-prod.pem',
+    '/etc/mosquitto/certs/ca-chain.pem',
+  ];
 
   SSHJailbreak({
     required this.directorIP,
@@ -53,19 +64,6 @@ class SSHJailbreak {
       SSHStep(
         title: 'Check System Files',
         subSteps: [
-          JailbreakSubStep(
-            title: 'Read Account Configuration',
-            description: 'Checking current password configuration',
-            execute: () async {
-              try {
-                await _readFile('/etc/passwd');
-                return true;
-              } catch (e) {
-                appLogger.e('Failed to read /etc/passwd:', error: e);
-                return false;
-              }
-            },
-          ),
           JailbreakSubStep(
             title: 'Read SSH Configuration',
             description: 'Checking SSH configuration',
@@ -120,20 +118,6 @@ class SSHJailbreak {
               }
             },
           ),
-          JailbreakSubStep(
-            title: 'Check Password Config',
-            description: 'Verifying password configuration changes',
-            execute: () async {
-              try {
-                final passwdConfig = await _readFile('/etc/passwd');
-                return passwdConfig.contains(
-                    r'root:$6$f4eEEch5avxQp5oR$fKTFi7..SZlVXd7I0zAtf4vP9jla.AwzMnqAIFybJWGQwglOh6JnUMQMvtgMpQPKqWcFouaLI4A5WwzTc7yTm0');
-              } catch (e) {
-                appLogger.e('Failed to verify password config:', error: e);
-                return false;
-              }
-            },
-          ),
         ],
         updateStepStatus: updateStepStatus,
       ),
@@ -175,60 +159,46 @@ class SSHJailbreak {
         ],
         updateStepStatus: updateStepStatus,
       ),
+      SSHStep(
+        title: 'Persist SSH Access',
+        subSteps: [
+          JailbreakSubStep(
+            title: 'Cache Device SSH Keys',
+            description: 'Saving controller SSH keys locally',
+            execute: () async {
+              try {
+                await _ensureSSHConnection();
+                await _downloadRootDeviceSshKeys();
+                return true;
+              } catch (e) {
+                appLogger.e('Failed to cache SSH keys:', error: e);
+                return false;
+              }
+            },
+          ),
+          JailbreakSubStep(
+            title: 'Patch authorized_keys',
+            description: 'Adding cached public keys to root authorized_keys',
+            execute: () async {
+              try {
+                await _ensureSSHConnection();
+                await _patchAuthorizedKeysFromCachedPublicKeys();
+                return true;
+              } catch (e) {
+                appLogger.e('Failed to patch authorized_keys:', error: e);
+                return false;
+              }
+            },
+          ),
+        ],
+        updateStepStatus: updateStepStatus,
+      ),
     ];
 
-    // If version is < 3.4.3.741643, we can use the API to reset the password
     if (directorVersion != null) {
       appLogger.i('Director Version: $directorVersion');
-      const threshold = [3, 4, 3, 741643];
-      if (_isVersionAtLeast(directorVersion, threshold)) {
-        steps.addAll(x4Steps);
-      } else {
-        steps.add(
-          SSHStep(
-            title: 'Reset Password',
-            subSteps: [
-              JailbreakSubStep(
-                title: 'Reset Password',
-                description: 'Using API to reset root password',
-                execute: () async {
-                  try {
-                    final url = 'https://${directorIP}:443/api/v1/password';
-                    final client = http.Client();
-
-                    final response = await client.post(
-                      Uri.parse(url),
-                      headers: {
-                        'Accept': 'application/json',
-                        'Content-Type': 'application/json',
-                        'Authorization': 'Bearer ${jwtToken}',
-                      },
-                      body: jsonEncode({
-                        'oldPassword': 't0talc0ntr0l4!',
-                        'newPassword': 't0talc0ntr0l4!',
-                      }),
-                    );
-
-                    if (response.statusCode != 200) {
-                      throw Exception(
-                          'Failed to reset password: ${response.statusCode}');
-                    }
-
-                    return true;
-                  } catch (e) {
-                    appLogger.e('Failed to reset password:', error: e);
-                    return false;
-                  }
-                },
-              ),
-            ],
-            updateStepStatus: updateStepStatus,
-          ),
-        );
-      }
-    } else {
-      steps.addAll(x4Steps);
     }
+    steps.addAll(x4Steps);
 
     steps.add(SSHStep(
       title: 'Verify SSH Access',
@@ -348,79 +318,67 @@ class SSHJailbreak {
                     (await File(publicCertPath).readAsString()).trim();
                 appLogger.t('Read local certificate from: $publicCertPath\n');
 
-                appLogger.t('Reading remote certificate with SSH...');
-                final readSession = await _sshClient!
-                    .execute('cat /etc/openvpn/clientca-prod.pem');
-                final bytesBuilder = BytesBuilder();
-                await for (final data in readSession.stdout) {
-                  bytesBuilder.add(data);
+                for (final remotePath in _remoteCertChainPaths) {
+                  appLogger
+                      .t('Reading remote certificate with SSH: $remotePath');
+                  final readSession = await _sshClient!
+                      .execute('cat $remotePath 2>/dev/null || true');
+                  final bytesBuilder = BytesBuilder();
+                  await for (final data in readSession.stdout) {
+                    bytesBuilder.add(data);
+                  }
+                  await readSession.done;
+                  final directorCert =
+                      String.fromCharCodes(bytesBuilder.takeBytes()).trim();
+
+                  if (directorCert.isEmpty) {
+                    appLogger
+                        .w('Skipping missing certificate chain: $remotePath');
+                    continue;
+                  }
+
+                  final uniqueRemoteCertChain =
+                      await _consolidateX509CertChain(directorCert);
+
+                  if (directorCert == uniqueRemoteCertChain &&
+                      directorCert.contains(publicCert)) {
+                    appLogger.i('Certificate already patched for $remotePath');
+                    continue;
+                  }
+
+                  final timestamp =
+                      DateTime.now().toString().replaceAll(':', '-');
+                  final backupFilename =
+                      '${remotePath.split('/').last}.$timestamp.backup';
+                  final remoteBackupPath =
+                      '${remotePath.substring(0, remotePath.lastIndexOf('/'))}/$backupFilename';
+
+                  appLogger.t('Creating remote backup at: $remoteBackupPath');
+                  final backupSession = await _sshClient!
+                      .execute('cp $remotePath $remoteBackupPath');
+                  await backupSession.done;
+
+                  final localBackupPath =
+                      '${localCertDir.path}/$backupFilename';
+                  await File(localBackupPath).writeAsString(directorCert);
+
+                  final combinedCert = '$uniqueRemoteCertChain\n$publicCert';
+                  final cleanedCertChain =
+                      await _consolidateX509CertChain(combinedCert);
+                  if (cleanedCertChain.trim().isEmpty) {
+                    appLogger.e(
+                        'Skipping write for $remotePath: dedupe produced empty chain');
+                    continue;
+                  }
+
+                  final writeSession =
+                      await _sshClient!.execute('cat > $remotePath');
+                  writeSession.stdin.add(utf8.encode(cleanedCertChain));
+                  await writeSession.stdin.close();
+                  await writeSession.done;
+                  appLogger
+                      .i('Certificate updated successfully for $remotePath');
                 }
-
-                final errorBytes = BytesBuilder();
-                await for (final data in readSession.stderr) {
-                  errorBytes.add(data);
-                }
-                final errorResult = utf8.decode(errorBytes.takeBytes());
-                if (errorResult.isNotEmpty) {
-                  appLogger.e('Error reading certificate: $errorResult');
-                }
-
-                await readSession.done;
-                final bytes = bytesBuilder.takeBytes();
-                final directorCert = String.fromCharCodes(bytes).trim();
-                appLogger.t('\nDirector Certificate Contents:');
-                appLogger.t('------------------------');
-                appLogger.t(directorCert);
-                appLogger.t('------------------------\n');
-
-                final uniqueRemoteCertChain =
-                    await _consolidateX509CertChain(directorCert);
-
-                // Check if our certificate is already in the chain and if unique
-                if (directorCert == uniqueRemoteCertChain &&
-                    directorCert.contains(publicCert)) {
-                  appLogger.i(
-                      'Certificate already patched and no duplicates found\n');
-                  return true;
-                }
-
-                final timestamp =
-                    DateTime.now().toString().replaceAll(':', '-');
-                final backupFilename = 'clientca-prod.$timestamp.backup';
-
-                appLogger.t('Creating remote backup...');
-                final remoteBackupPath = '/etc/openvpn/$backupFilename';
-                final backupSession = await _sshClient!.execute(
-                    'cp /etc/openvpn/clientca-prod.pem $remoteBackupPath');
-                await backupSession.done;
-                appLogger.t('Created remote backup at: $remoteBackupPath\n');
-
-                appLogger.t('Creating local backup...');
-                final localBackupPath = '${localCertDir.path}/$backupFilename';
-                await File(localBackupPath).writeAsString(directorCert);
-                appLogger.t('Created local backup at: $localBackupPath\n');
-
-                // Combine and check for unique certificates
-                final combinedCert = '$uniqueRemoteCertChain\n$publicCert';
-                final cleanedCertChain =
-                    await _consolidateX509CertChain(combinedCert);
-
-                // Make sure we never write an empty certificate chain
-                if (cleanedCertChain.trim().isEmpty) {
-                  appLogger.e(
-                      'ERROR: Certificate cleaning produced an empty result!');
-                  appLogger.e(
-                      'Skipping certificate cleaning to avoid an empty chain.');
-                  return false;
-                }
-
-                appLogger.t('Updating remote certificate...');
-                final writeSession = await _sshClient!
-                    .execute('cat > /etc/openvpn/clientca-prod.pem');
-                writeSession.stdin.add(utf8.encode(cleanedCertChain));
-                await writeSession.stdin.close(); // Send EOF
-                await writeSession.done;
-                appLogger.i('Certificate updated successfully\n');
 
                 return true;
               } catch (e) {
@@ -447,63 +405,42 @@ class SSHJailbreak {
                 appLogger.t(publicCert);
                 appLogger.t('------------------------\n');
 
-                appLogger.t('Reading remote certificate with SSH...');
-                final readSession = await _sshClient!
-                    .execute('cat /etc/openvpn/clientca-prod.pem');
-                final bytesBuilder = BytesBuilder();
-                await for (final data in readSession.stdout) {
-                  bytesBuilder.add(data);
-                }
-
-                final errorBytes = BytesBuilder();
-                await for (final data in readSession.stderr) {
-                  errorBytes.add(data);
-                }
-                final errorResult = utf8.decode(errorBytes.takeBytes());
-                if (errorResult.isNotEmpty) {
-                  appLogger.e('Error reading certificate: $errorResult');
-                }
-
-                await readSession.done;
-                final bytes = bytesBuilder.takeBytes();
-                final directorCert = String.fromCharCodes(bytes);
-                appLogger.t('\nDirector Certificate Contents:');
-                appLogger.t('------------------------');
-                appLogger.t(directorCert);
-                appLogger.t('------------------------\n');
-
-                // Verify our certificate is in the Director's certificate
                 final normalizedPublicCert = publicCert
                     .replaceAll('\r\n', '\n')
                     .replaceAll('\r', '\n')
                     .trim();
-                final normalizedDirectorCert = directorCert
-                    .replaceAll('\r\n', '\n')
-                    .replaceAll('\r', '\n')
-                    .trim();
 
-                final isVerified =
-                    normalizedDirectorCert.contains(normalizedPublicCert);
-                if (isVerified) {
-                  appLogger.i('Certificate verification successful');
-                } else {
-                  appLogger.w(
-                      'Certificate verification failed - our certificate not found in Director\'s certificate');
-                  appLogger.t('\nChecking for partial matches...');
+                bool foundAnyChain = false;
+                bool allPatched = true;
+                for (final remotePath in _remoteCertChainPaths) {
+                  final readSession = await _sshClient!
+                      .execute('cat $remotePath 2>/dev/null || true');
+                  final bytesBuilder = BytesBuilder();
+                  await for (final data in readSession.stdout) {
+                    bytesBuilder.add(data);
+                  }
+                  await readSession.done;
 
-                  // Try to find partial matches for debugging
-                  final localLines = normalizedPublicCert.split('\n');
-                  for (var line in localLines) {
-                    if (line.trim().isNotEmpty) {
-                      if (normalizedDirectorCert.contains(line.trim())) {
-                        appLogger.t('Found matching line: $line');
-                      } else {
-                        appLogger.t('Missing line: $line');
-                      }
-                    }
+                  final directorCert =
+                      String.fromCharCodes(bytesBuilder.takeBytes()).trim();
+                  if (directorCert.isEmpty) {
+                    continue;
+                  }
+
+                  foundAnyChain = true;
+                  final normalizedDirectorCert = directorCert
+                      .replaceAll('\r\n', '\n')
+                      .replaceAll('\r', '\n')
+                      .trim();
+                  final patched =
+                      normalizedDirectorCert.contains(normalizedPublicCert);
+                  appLogger.i(
+                      'Verification for $remotePath: ${patched ? 'patched' : 'missing cert'}');
+                  if (!patched) {
+                    allPatched = false;
                   }
                 }
-                return isVerified;
+                return foundAnyChain && allPatched;
               } catch (e) {
                 appLogger.e('Failed to verify certificate:', error: e);
                 return false;
@@ -533,38 +470,6 @@ class SSHJailbreak {
     appLogger.t('Step Titles: ${steps.map((step) => step.title).join(', ')}');
 
     return steps;
-  }
-
-  // Version comparison helpers
-  List<int> _parseVersionComponents(String? versionString) {
-    if (versionString == null || versionString.trim().isEmpty) {
-      return [];
-    }
-    final base = versionString.split('-').first;
-    final parts = base.split('.');
-    final List<int> components = [];
-    for (final part in parts) {
-      final parsed = int.tryParse(part) ?? 0;
-      components.add(parsed);
-    }
-    while (components.length < 4) {
-      components.add(0);
-    }
-    if (components.length > 4) {
-      return components.sublist(0, 4);
-    }
-    return components;
-  }
-
-  bool _isVersionAtLeast(String? versionString, List<int> threshold) {
-    final ver = _parseVersionComponents(versionString);
-    if (ver.isEmpty) return false;
-    final maxLen = threshold.length;
-    for (var i = 0; i < maxLen; i++) {
-      if (ver[i] > threshold[i]) return true;
-      if (ver[i] < threshold[i]) return false;
-    }
-    return true; // equal
   }
 
   Future<String?> _getWritableDriver() async {
@@ -623,14 +528,10 @@ class SSHJailbreak {
 
   Future<void> _applyExploit(String driverId) async {
     const luaExploit = r'''
-    -- Paths
-    local ssh_path    = "/etc/ssh/sshd_config"
-    local passwd_path = "/etc/passwd"
+    -- Only patch sshd_config to restore SSH password auth
+    local ssh_path = "/etc/ssh/sshd_config"
 
-    -- Desired root password hash
-    local new_root_hash = "$6$f4eEEch5avxQp5oR$fKTFi7..SZlVXd7I0zAtf4vP9jla.AwzMnqAIFybJWGQwglOh6JnUMQMvtgMpQPKqWcFouaLI4A5WwzTc7yTm0"
-
-    -- 1) Read & patch sshd_config
+    -- Read & patch sshd_config
     local ssh_lines = {}
     for line in io.lines(ssh_path) do
       if line:match("^%s*PasswordAuthentication%s+no") then
@@ -640,35 +541,12 @@ class SSHJailbreak {
       end
     end
 
-    -- 2) Read & patch /etc/passwd
-    local pw_lines = {}
-    for line in io.lines(passwd_path) do
-      if line:match("^root:") then
-        -- split on ':' and replace the 2nd field
-        local parts = {}
-        for field in line:gmatch("([^:]+)") do
-          parts[#parts+1] = field
-        end
-        parts[2] = new_root_hash
-        pw_lines[#pw_lines+1] = table.concat(parts, ":")
-      else
-        pw_lines[#pw_lines+1] = line
-      end
-    end
-
-    -- 3) Write back sshd_config
+    -- Write back sshd_config
     local f = assert(io.open(ssh_path, "w"))
     for _, l in ipairs(ssh_lines) do
       f:write(l, "\n")
     end
     f:close()
-
-    -- 4) Write back /etc/passwd
-    local f2 = assert(io.open(passwd_path, "w"))
-    for _, l in ipairs(pw_lines) do
-      f2:write(l, "\n")
-    end
-    f2:close()
     ''';
 
     final url = 'https://${directorIP}:443/api/v1/items/$driverId/commands';
@@ -731,9 +609,11 @@ class SSHJailbreak {
       while (retries > 0) {
         try {
           _sshSocket = await SSHSocket.connect(directorIP, 22);
+          final identities = await _loadCachedSshIdentities();
           _sshClient = SSHClient(
             _sshSocket!,
             username: AppSettings.instance.getDefaultSshUsername(),
+            identities: identities.isEmpty ? null : identities,
             onPasswordRequest: () =>
                 AppSettings.instance.getDefaultSshPassword(),
           );
@@ -768,6 +648,116 @@ class SSHJailbreak {
     }
   }
 
+  Future<Directory> _getLocalKeysFolder() async {
+    final appSupportDir = await getApplicationSupportDirectory();
+    final safeId = directorIP.replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_');
+    final dir = Directory('${appSupportDir.path}/Keys/$safeId');
+    if (!dir.existsSync()) {
+      await dir.create(recursive: true);
+    }
+    return dir;
+  }
+
+  Future<List<SSHKeyPair>> _loadCachedSshIdentities() async {
+    try {
+      final keysDir = await _getLocalKeysFolder();
+      final identities = <SSHKeyPair>[];
+
+      for (final keyName
+          in _rootSshKeyFiles.where((f) => !f.endsWith('.pub'))) {
+        final file = File('${keysDir.path}/$keyName');
+        if (!file.existsSync()) {
+          continue;
+        }
+
+        try {
+          final pem = await file.readAsString();
+          identities.addAll(SSHKeyPair.fromPem(pem));
+        } catch (e) {
+          appLogger.w('Unable to parse cached SSH key $keyName: $e');
+        }
+      }
+
+      if (identities.isNotEmpty) {
+        appLogger.i('Loaded ${identities.length} cached SSH key identity(ies)');
+      }
+      return identities;
+    } catch (e) {
+      appLogger.w('Failed loading cached SSH identities: $e');
+      return <SSHKeyPair>[];
+    }
+  }
+
+  Future<void> _downloadRootDeviceSshKeys() async {
+    final keysDir = await _getLocalKeysFolder();
+    for (final keyName in _rootSshKeyFiles) {
+      final remotePath = '/etc/ssh/$keyName';
+      try {
+        final readSession = await _sshClient!.execute('cat $remotePath');
+        final stdoutBytes = BytesBuilder();
+        await for (final data in readSession.stdout) {
+          stdoutBytes.add(data);
+        }
+        await readSession.done;
+
+        final contents = utf8.decode(stdoutBytes.takeBytes());
+        if (contents.trim().isEmpty || contents.contains('No such file')) {
+          continue;
+        }
+
+        await File('${keysDir.path}/$keyName').writeAsString(contents);
+      } catch (e) {
+        appLogger.w('Skipping unavailable key $remotePath: $e');
+      }
+    }
+  }
+
+  Future<void> _patchAuthorizedKeysFromCachedPublicKeys() async {
+    final keysDir = await _getLocalKeysFolder();
+    final localPubKeys = <String>[];
+
+    for (final keyName in _rootSshKeyFiles.where((f) => f.endsWith('.pub'))) {
+      final file = File('${keysDir.path}/$keyName');
+      if (!file.existsSync()) {
+        continue;
+      }
+      final key = (await file.readAsString()).trim();
+      if (key.isNotEmpty) {
+        localPubKeys.add(key);
+      }
+    }
+
+    if (localPubKeys.isEmpty) {
+      appLogger.w('No cached SSH public keys found to patch authorized_keys');
+      return;
+    }
+
+    final mkdirSession = await _sshClient!
+        .execute('mkdir -p /home/root/.ssh && chmod 700 /home/root/.ssh');
+    await mkdirSession.done;
+
+    final readSession = await _sshClient!
+        .execute('cat /home/root/.ssh/authorized_keys 2>/dev/null || true');
+    final stdoutBytes = BytesBuilder();
+    await for (final data in readSession.stdout) {
+      stdoutBytes.add(data);
+    }
+    await readSession.done;
+
+    var authorizedKeys = utf8.decode(stdoutBytes.takeBytes()).trim();
+    for (final key in localPubKeys) {
+      if (!authorizedKeys.contains(key)) {
+        authorizedKeys = authorizedKeys.isEmpty ? key : '$authorizedKeys\n$key';
+      }
+    }
+
+    final writeSession = await _sshClient!.execute(
+        'cat > /home/root/.ssh/authorized_keys && chmod 600 /home/root/.ssh/authorized_keys');
+    writeSession.stdin.add(utf8.encode('$authorizedKeys\n'));
+    await writeSession.stdin.close();
+    await writeSession.done;
+  }
+
   Future<void> _closeSSHConnection() async {
     try {
       if (_sshClient != null) {
@@ -798,14 +788,24 @@ class SSHJailbreak {
       // SCP isn't supported with this version of SSH and
       // SFTP is not supported on OS3 apparently
 
-      final session =
-          await _sshClient!.execute('cat /etc/openvpn/clientca-prod.pem');
-      final bytesBuilder = BytesBuilder();
-      await for (final data in session.stdout) {
-        bytesBuilder.add(data);
+      Uint8List bytes = Uint8List(0);
+      for (final remotePath in _remoteCertChainPaths) {
+        final session =
+            await _sshClient!.execute('cat $remotePath 2>/dev/null || true');
+        final bytesBuilder = BytesBuilder();
+        await for (final data in session.stdout) {
+          bytesBuilder.add(data);
+        }
+        await session.done;
+        final candidate = bytesBuilder.takeBytes();
+        if (candidate.isNotEmpty) {
+          bytes = candidate;
+          break;
+        }
       }
-      final bytes = bytesBuilder.takeBytes();
-      await session.done;
+      if (bytes.isEmpty) {
+        throw Exception('Could not read any known remote certificate chain');
+      }
 
       await File(localCertPath).writeAsBytes(bytes);
       appLogger.t('Downloaded certificate to: $localCertPath');
@@ -827,34 +827,26 @@ class SSHJailbreak {
       appLogger.i('\n=== Creating Certificate Backup ===');
       await _ensureSSHConnection();
 
+      bool backedUpAny = false;
       final timestamp = DateTime.now().millisecondsSinceEpoch.toString();
-      final backupPath = '/etc/openvpn/clientca-prod.${timestamp}.backup';
-      appLogger.t('Backup path: $backupPath');
-
-      // Use single quotes around the path to prevent shell expansion issues
-      appLogger.t('Executing backup command...');
-      final session = await _sshClient!.execute(
-          "cp /etc/openvpn/clientca-prod.pem '${backupPath}' && echo 'Success'");
-
-      final outputBytes = BytesBuilder();
-      await for (final data in session.stdout) {
-        outputBytes.add(data);
-        appLogger.t('data: ${String.fromCharCodes(data)}');
+      for (final remotePath in _remoteCertChainPaths) {
+        final backupPath = '$remotePath.${timestamp}.backup';
+        final session = await _sshClient!.execute(
+            "if [ -f '$remotePath' ]; then cp '$remotePath' '$backupPath' && echo 'Success'; fi");
+        final outputBytes = BytesBuilder();
+        await for (final data in session.stdout) {
+          outputBytes.add(data);
+        }
+        await session.done;
+        final result = utf8.decode(outputBytes.takeBytes());
+        if (result.contains('Success')) {
+          backedUpAny = true;
+          appLogger.t('Created backup at: $backupPath');
+        }
       }
-      await for (final data in session.stderr) {
-        appLogger.t('error: ${String.fromCharCodes(data)}');
+      if (!backedUpAny) {
+        throw Exception('Failed to create any remote certificate backup');
       }
-      final result = utf8.decode(outputBytes.takeBytes());
-
-      appLogger.t('Backup result: $result');
-
-      await session.done;
-
-      if (!result.contains('Success')) {
-        throw Exception('Failed to create backup on remote system');
-      }
-
-      appLogger.t('Created backup at: $backupPath\n');
     } catch (e) {
       appLogger.e('Failed to create backup:', error: e);
       rethrow;

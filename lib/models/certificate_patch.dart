@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+import 'package:crypto/crypto.dart';
+import 'package:c4_tools/tools/http_client.dart';
+import 'package:c4_tools/services/control4_updates_service.dart';
 import 'jailbreak_step.dart';
 import 'package:flutter/services.dart';
 import 'package:xml/xml.dart';
@@ -10,6 +14,7 @@ import 'package:c4_tools/services/app_logger.dart' show appLogger;
 
 class CertificatePatch {
   final String directorIP;
+  final String? directorVersion;
   final String? jwtToken;
   final Function(int, StepStatus, [String?]) updateStepStatus;
   Directory? localCertDir;
@@ -21,10 +26,15 @@ class CertificatePatch {
   static const String CertificateCN = 'Composer_C4Tools';
   static const String CertPassword = 'R8lvpqtgYiAeyO8j8Pyd';
   static const int CertificateExpireDays = 3650;
+  static const int CertSchemaVersion = 1;
+  static const String _updatesExperienceUrl =
+      'https://services.control4.com/Updates2x-experience/v2_0/Updates.asmx';
+  final Control4UpdatesService _updatesService = Control4UpdatesService();
 
   CertificatePatch({
     required this.directorIP,
     required this.jwtToken,
+    required this.directorVersion,
     required this.updateStepStatus,
   });
 
@@ -59,6 +69,12 @@ class CertificatePatch {
               '${localCertDir!.path}/private.key',
               '${localCertDir!.path}/public.pem'
             ];
+            final schemaFile = File('${localCertDir!.path}/.schema-version');
+            final storedSchemaVersion = schemaFile.existsSync()
+                ? schemaFile.readAsStringSync().trim()
+                : null;
+            final schemaMatches =
+                storedSchemaVersion == CertSchemaVersion.toString();
 
             bool allCertificatesExist = true;
             for (final file in certFiles) {
@@ -69,7 +85,7 @@ class CertificatePatch {
               }
             }
 
-            if (allCertificatesExist) {
+            if (allCertificatesExist && schemaMatches) {
               appLogger.i('Certificates already exist');
 
               // Prompt user to use existing certificates or recreate them
@@ -121,7 +137,12 @@ class CertificatePatch {
               }
             }
 
-            appLogger.i('Certificates not found or will be regenerated');
+            if (allCertificatesExist && !schemaMatches) {
+              appLogger.i(
+                  'Certificate schema mismatch ($storedSchemaVersion -> $CertSchemaVersion), regenerating.');
+            } else {
+              appLogger.i('Certificates not found or will be regenerated');
+            }
             return true;
           } catch (e) {
             appLogger.e('Failed to check existing certificates', error: e);
@@ -176,14 +197,16 @@ class CertificatePatch {
               'req',
               '-new',
               '-x509',
-              '-sha1',
+              '-sha256',
               '-nodes',
               '-days',
               CertificateExpireDays.toString(),
               '-newkey',
-              'rsa:1024',
+              'rsa:2048',
               '-keyout',
               '${localCertDir!.path}/private.key',
+              '-extensions',
+              'v3_ca',
               '-subj',
               '/C=US/ST=Utah/L=Draper/O=Control4 Corporation/CN=Control4 Corporation CA/emailAddress=pki@control4.com/',
               '-out',
@@ -195,6 +218,8 @@ class CertificatePatch {
             }
 
             appLogger.i('Generated private + public keys successfully');
+            await File('${localCertDir!.path}/.schema-version')
+                .writeAsString(CertSchemaVersion.toString());
             return true;
           } catch (e) {
             appLogger.e('Failed to generate keys', error: e);
@@ -334,20 +359,6 @@ class CertificatePatch {
                   'Could not find system.net section in config file');
             }
 
-            // Check if already patched
-            final defaultProxy =
-                systemNet.findElements('defaultProxy').firstOrNull;
-            if (defaultProxy != null) {
-              final proxy = defaultProxy.findElements('proxy').firstOrNull;
-              if (proxy != null &&
-                  proxy.getAttribute('proxyaddress') ==
-                      'http://127.0.0.1:31337/') {
-                appLogger.i(
-                    'Config file is already patched - continuing with next steps');
-                return true;
-              }
-            }
-
             // Create the new defaultProxy element
             final defaultProxyElement = XmlElement(
               XmlName('defaultProxy'),
@@ -363,11 +374,33 @@ class CertificatePatch {
                   ],
                   [],
                 ),
+                XmlElement(
+                  XmlName('bypasslist'),
+                  [],
+                  [
+                    XmlElement(XmlName('add'), [
+                      XmlAttribute(
+                          XmlName('address'), r'services\.control4\.com')
+                    ], []),
+                    XmlElement(XmlName('add'), [
+                      XmlAttribute(
+                          XmlName('address'), r'update2\.control4\.com')
+                    ], []),
+                    XmlElement(XmlName('add'), [
+                      XmlAttribute(
+                          XmlName('address'), r'c4updates\.control4\.com')
+                    ], []),
+                  ],
+                ),
               ],
             );
 
-            // Add the defaultProxy element to system.net
-            systemNet.children.add(defaultProxyElement);
+            final existingDefaultProxy =
+                systemNet.findElements('defaultProxy').firstOrNull;
+            existingDefaultProxy?.replace(defaultProxyElement);
+            if (existingDefaultProxy == null) {
+              systemNet.children.add(defaultProxyElement);
+            }
 
             appLogger.i('Writing modified config...');
             await File(configPath)
@@ -376,6 +409,49 @@ class CertificatePatch {
             return true;
           } catch (e) {
             appLogger.e('Failed to modify config', error: e);
+            return false;
+          }
+        },
+      ),
+      JailbreakSubStep(
+        title: 'Write Feature Flags',
+        description: 'Creating offline feature flag cache for Composer',
+        execute: () async {
+          try {
+            await _writeFeatureFlagsConfig();
+            return true;
+          } catch (e) {
+            appLogger.e('Failed to write feature flags', error: e);
+            return false;
+          }
+        },
+      ),
+      JailbreakSubStep(
+        title: 'Update Manager URL',
+        description: 'Setting default Update Manager experience endpoint',
+        execute: () async {
+          try {
+            await _updateUpdateManagerSettings();
+            return true;
+          } catch (e) {
+            appLogger.e('Failed to update Update Manager URL', error: e);
+            return false;
+          }
+        },
+      ),
+      JailbreakSubStep(
+        title: 'Install Management Pack',
+        description: 'Detecting and installing matching Drivers package',
+        execute: () async {
+          try {
+            if (!Platform.isWindows) {
+              appLogger
+                  .i('Skipping management pack installation: Windows only');
+              return true;
+            }
+            return await _installManagementPackWithRetries();
+          } catch (e) {
+            appLogger.e('Failed to install management pack', error: e);
             return false;
           }
         },
@@ -397,7 +473,7 @@ class CertificatePatch {
               'genrsa',
               '-out',
               '${localCertDir!.path}/composer.key',
-              '1024',
+              '2048',
             ]);
 
             if (result.exitCode != 0) {
@@ -462,7 +538,13 @@ class CertificatePatch {
           try {
             appLogger.i('\nExecuting Sign Request');
 
-            Directory.current = localCertDir!.path;
+            await File('${localCertDir!.path}/ext.conf').writeAsString(
+              '[v3_client]\n'
+              'subjectAltName=DNS:$CertificateCN\n'
+              'extendedKeyUsage=clientAuth,serverAuth\n'
+              'basicConstraints=CA:FALSE\n'
+              'keyUsage=digitalSignature,keyEncipherment\n',
+            );
 
             appLogger.i('Running OpenSSL CA command...');
             final result = await _runOpenSSL([
@@ -478,8 +560,12 @@ class CertificatePatch {
               '-out',
               '${localCertDir!.path}/composer.pem',
               '-days',
-              '365',
-              '-sha256'
+              '1095',
+              '-sha256',
+              '-extfile',
+              '${localCertDir!.path}/ext.conf',
+              '-extensions',
+              'v3_client',
             ]);
 
             if (result.exitCode != 0) {
@@ -586,10 +672,10 @@ class CertificatePatch {
 
             const xmlContent = '''<?xml version="1.0" encoding="utf-8"?>
                                   <DealerAccount>
-                                    <Username>control4</Username>
+                                    <Username>no</Username>
                                     <Employee>False</Employee>
-                                    <Password>5lX1rOoPaoo1nuxE+NiuRQ==</Password>
-                                    <UserHash>62b4f821ef6cb5d3dc1b3d954c7e8423ee85d5e8ad45beb026c5e20944625313</UserHash>
+                                    <Password>+bJjU5zcsEI=</Password>
+                                    <UserHash>9390298f3fb0c5b160498935d79cb139aef28e1c47358b4bbba61862b9c26e59</UserHash>
                                   </DealerAccount>''';
 
             await dealerAccountFile.writeAsString(xmlContent);
@@ -643,6 +729,341 @@ class CertificatePatch {
           error: e, stackTrace: StackTrace.current);
       rethrow;
     }
+  }
+
+  Future<void> _writeFeatureFlagsConfig() async {
+    final appData = Platform.environment['APPDATA'] ??
+        'C:\\Users\\${Platform.environment['USERNAME']}\\AppData\\Roaming';
+    final composerDir = Directory('$appData\\Control4\\Composer');
+    await composerDir.create(recursive: true);
+
+    final featureFlags = <String, Map<String, dynamic>>{
+      'composer-x4-updatemanger-restrict-override': {
+        'Result': true,
+        'Config': null,
+      },
+      'connection-whitelist': {
+        'Result': false,
+        'Config': '[]',
+      },
+      'os-pack-on-connect': {
+        'Result': true,
+        'Config': null,
+      },
+    };
+
+    final featurePath = '${composerDir.path}\\FeaturesConfiguration.json';
+    await File(featurePath).writeAsString(jsonEncode(featureFlags));
+    appLogger.i('Wrote Composer feature flags at: $featurePath');
+  }
+
+  Future<void> _updateUpdateManagerSettings() async {
+    final appData = Platform.environment['APPDATA'] ??
+        'C:\\Users\\${Platform.environment['USERNAME']}\\AppData\\Roaming';
+    final composerDir = Directory('$appData\\Control4\\Composer');
+    await composerDir.create(recursive: true);
+    final settingsPath =
+        '${composerDir.path}\\ComposerUpdateManagerSettings.Config';
+
+    final settingsXml = XmlDocument([
+      XmlProcessing('xml', 'version="1.0" encoding="utf-8"'),
+      XmlElement(
+        XmlName('settings'),
+        [],
+        [
+          XmlElement(
+            XmlName('UpdateURLList30'),
+            [XmlAttribute(XmlName('type'), 'System.Collections.ArrayList')],
+            [
+              XmlElement(
+                XmlName('ArrayOfAnyType'),
+                [
+                  XmlAttribute(XmlName('xsi', 'xmlns'),
+                      'http://www.w3.org/2001/XMLSchema-instance'),
+                  XmlAttribute(XmlName('xsd', 'xmlns'),
+                      'http://www.w3.org/2001/XMLSchema'),
+                ],
+                [
+                  XmlElement(
+                    XmlName('anyType'),
+                    [XmlAttribute(XmlName('type', 'xsi'), 'xsd:string')],
+                    [XmlText(_updatesExperienceUrl)],
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ],
+      ),
+    ]);
+
+    await File(settingsPath)
+        .writeAsString(settingsXml.toXmlString(pretty: true));
+    appLogger.i('Wrote Update Manager settings at: $settingsPath');
+  }
+
+  Future<bool> _installManagementPackWithRetries() async {
+    final version = directorVersion?.trim();
+    if (version == null || version.isEmpty) {
+      appLogger
+          .w('Skipping management pack install: Director version unavailable');
+      return true;
+    }
+
+    const maxAttempts = 3;
+    Object? lastError;
+
+    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        appLogger.i(
+            'Installing management pack for Director $version (attempt $attempt/$maxAttempts)');
+
+        final installed = await _getInstalledManagementPackVersions();
+        if (_isPackInstalled(version, installed)) {
+          appLogger.i('Management pack already installed for $version');
+          return true;
+        }
+
+        final package = await _resolveDriversPackageInfo(version);
+        if (package == null) {
+          throw Exception('Could not resolve Drivers package for $version');
+        }
+
+        final appSupportDir = await getApplicationSupportDirectory();
+        final downloadDir = Directory('${appSupportDir.path}/Downloads');
+        if (!downloadDir.existsSync()) {
+          await downloadDir.create(recursive: true);
+        }
+
+        final installerPath = '${downloadDir.path}\\${package.name}';
+        await _downloadFileWithRetry(
+          url: package.url,
+          destinationPath: installerPath,
+          attempts: 3,
+        );
+
+        if (package.checksum.isNotEmpty) {
+          final actualMd5 = await _computeMd5(installerPath);
+          final expected = package.checksum.toLowerCase();
+          if (actualMd5 != expected) {
+            throw Exception(
+                'Management pack checksum mismatch (expected $expected, got $actualMd5)');
+          }
+          appLogger.i('Management pack checksum verified');
+        }
+
+        final installOk = await _runInstallerWithFallback(installerPath);
+        if (!installOk) {
+          throw Exception('Management pack installer did not complete');
+        }
+
+        final installedAfter = await _getInstalledManagementPackVersions();
+        if (!_isPackInstalled(version, installedAfter)) {
+          throw Exception(
+              'Installer completed but package is still not detected as installed');
+        }
+
+        appLogger.i('Management pack installation successful for $version');
+        return true;
+      } catch (e) {
+        lastError = e;
+        appLogger.w('Management pack attempt $attempt failed: $e');
+        if (attempt < maxAttempts) {
+          await Future.delayed(Duration(seconds: 2 * attempt));
+        }
+      }
+    }
+
+    appLogger.e('Management pack installation failed after retries',
+        error: lastError);
+    return false;
+  }
+
+  Future<void> _downloadFileWithRetry({
+    required String url,
+    required String destinationPath,
+    int attempts = 3,
+  }) async {
+    Object? lastError;
+    for (var i = 1; i <= attempts; i++) {
+      try {
+        final client = httpIOClient();
+        final response = await client.get(Uri.parse(url));
+        if (response.statusCode != 200) {
+          throw Exception(
+              'Download failed (status ${response.statusCode}) from $url');
+        }
+        await File(destinationPath).writeAsBytes(response.bodyBytes);
+        return;
+      } catch (e) {
+        lastError = e;
+        if (i < attempts) {
+          await Future.delayed(Duration(seconds: i));
+        }
+      }
+    }
+    throw Exception('Download failed after retries: $lastError');
+  }
+
+  Future<bool> _runInstallerWithFallback(String installerPath) async {
+    final argumentSets = <List<String>>[
+      ['/S'],
+      ['/s'],
+      ['/quiet', '/norestart'],
+      ['/verysilent', '/norestart'],
+      const [],
+    ];
+
+    for (final args in argumentSets) {
+      try {
+        appLogger.i(
+            'Running management pack installer with args: ${args.join(' ')}');
+        final result = await Process.run(installerPath, args, runInShell: true);
+        appLogger.d('Installer exit code: ${result.exitCode}');
+        if (result.exitCode == 0) {
+          return true;
+        }
+      } catch (e) {
+        appLogger.w('Installer run failed with args $args: $e');
+      }
+    }
+
+    return false;
+  }
+
+  Future<String> _computeMd5(String filePath) async {
+    final bytes = await File(filePath).readAsBytes();
+    return md5.convert(bytes).toString().toLowerCase();
+  }
+
+  Future<_DriversPackageInfo?> _resolveDriversPackageInfo(
+      String directorVersion) async {
+    final candidates = _buildPackageVersionCandidates(directorVersion);
+
+    for (final candidate in candidates) {
+      try {
+        final packages = await _updatesService.getPackagesByVersion(
+          endpoint: _updatesExperienceUrl,
+          version: candidate,
+        );
+        for (final pkg in packages) {
+          final name = pkg.name;
+          if (!name.toLowerCase().startsWith('drivers-')) {
+            continue;
+          }
+          final url = pkg.url.replaceFirst('http://', 'https://');
+          final checksum = pkg.checksum;
+          if (name.isEmpty || url.isEmpty) {
+            continue;
+          }
+          appLogger
+              .i('Resolved management pack $name using version $candidate');
+          return _DriversPackageInfo(
+            name: name,
+            url: url,
+            checksum: checksum,
+          );
+        }
+      } catch (e) {
+        appLogger.w('SOAP package lookup failed for $candidate: $e');
+      }
+    }
+
+    return null;
+  }
+
+  List<String> _buildPackageVersionCandidates(String directorVersion) {
+    final raw = directorVersion.trim();
+    final base = raw.split('+').first;
+    final noSuffix = base.split('-').first;
+    final parts = noSuffix.split('.');
+    final shortVersion =
+        parts.length >= 3 ? '${parts[0]}.${parts[1]}.${parts[2]}' : noSuffix;
+
+    final candidates = <String>[
+      if (raw.contains('+Composer')) raw,
+      if (!raw.contains('+Composer') && raw.endsWith('-res')) '$raw+Composer',
+      if (!raw.contains('+Composer')) '$raw-res+Composer',
+      if (!raw.contains('+Composer')) '$raw+Composer',
+      '$base+Composer',
+      '$base-res+Composer',
+      '$noSuffix+Composer',
+      '$noSuffix-res+Composer',
+      '$shortVersion+Composer',
+      '$shortVersion-res+Composer',
+    ];
+
+    final unique = <String>{};
+    return candidates.where((c) => unique.add(c)).toList();
+  }
+
+  Future<Set<String>> _getInstalledManagementPackVersions() async {
+    final installed = <String>{};
+    final queryPaths = <String>[
+      r'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
+      r'HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall',
+    ];
+
+    for (final path in queryPaths) {
+      try {
+        final result = await Process.run(
+          'reg',
+          ['query', path, '/s', '/v', 'DisplayName'],
+          runInShell: true,
+        );
+
+        if (result.exitCode != 0) {
+          continue;
+        }
+
+        final lines = result.stdout.toString().split('\n');
+        for (final rawLine in lines) {
+          final line = rawLine.trim();
+          if (!line.contains('REG_SZ')) {
+            continue;
+          }
+          final displayName = line.split(RegExp(r'\s+REG_SZ\s+')).last.trim();
+
+          if (displayName.toLowerCase().startsWith('drivers-')) {
+            var ver = displayName.substring(8);
+            final dashIdx = ver.indexOf('-');
+            if (dashIdx > 0) {
+              ver = ver.substring(0, dashIdx);
+            }
+            if (ver.isNotEmpty) {
+              installed.add(ver);
+            }
+          } else if (displayName
+              .toLowerCase()
+              .startsWith('composer os management package ')) {
+            final ver = displayName
+                .substring('Composer OS Management Package '.length)
+                .trim();
+            if (ver.isNotEmpty) {
+              installed.add(ver);
+            }
+          }
+        }
+      } catch (e) {
+        appLogger.w('Management pack registry query failed for $path: $e');
+      }
+    }
+
+    return installed;
+  }
+
+  bool _isPackInstalled(String soapVersion, Set<String> installedVersions) {
+    final normalized = soapVersion.split('-').first;
+    if (installedVersions.contains(soapVersion) ||
+        installedVersions.contains(normalized)) {
+      return true;
+    }
+    for (final iv in installedVersions) {
+      if (normalized == iv || normalized.startsWith('$iv.')) {
+        return true;
+      }
+    }
+    return false;
   }
 
   Future<void> _copyFile(String source, String destination) async {
@@ -716,4 +1137,16 @@ class CertificatePatch {
 
     return pickedPath;
   }
+}
+
+class _DriversPackageInfo {
+  final String name;
+  final String url;
+  final String checksum;
+
+  const _DriversPackageInfo({
+    required this.name,
+    required this.url,
+    required this.checksum,
+  });
 }

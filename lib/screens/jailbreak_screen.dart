@@ -53,6 +53,7 @@ class _JailbreakScreenState extends State<JailbreakScreen> {
     _certPatch = CertificatePatch(
       directorIP: widget.directorIP,
       jwtToken: widget.jwtToken,
+      directorVersion: widget.directorVersion,
       updateStepStatus: _updateStepStatus,
     );
     _certPatch.context = context;
@@ -204,9 +205,35 @@ class _JailbreakScreenState extends State<JailbreakScreen> {
         await _updateStepStatus(originalIndex, StepStatus.running);
         appLogger.t('Step status updated');
 
-        appLogger.t('Calling step.execute($originalIndex)');
-        final success = await step.execute(originalIndex);
-        appLogger.d('Step execution completed with result: $success');
+        const maxStepAttempts = 3;
+        bool? success;
+        for (var attempt = 1; attempt <= maxStepAttempts; attempt++) {
+          if (_isCancelRequested) {
+            appLogger.w('Jailbreak cancelled by user during retry loop');
+            MainApp.showSnackBar('Jailbreak cancelled by user', isError: true);
+            return;
+          }
+
+          if (attempt > 1) {
+            final retryMsg = 'Retrying (${attempt}/${maxStepAttempts})';
+            await _updateStepStatus(
+                originalIndex, StepStatus.running, retryMsg);
+            appLogger.w('Retrying step "${step.title}" attempt $attempt');
+          }
+
+          appLogger.t('Calling step.execute($originalIndex), attempt $attempt');
+          success = await step.execute(originalIndex);
+          appLogger.d(
+              'Step execution completed with result: $success (attempt $attempt)');
+
+          if (success == true || success == null) {
+            break;
+          }
+
+          if (attempt < maxStepAttempts) {
+            await Future.delayed(Duration(seconds: attempt));
+          }
+        }
 
         // If the step was cancelled by the user, stop the jailbreak
         if (success == null) {

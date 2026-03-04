@@ -345,12 +345,15 @@ class _UpdateManagerScreenState extends State<UpdateManagerScreen> {
                   // Look for the update URL input field
                   const urlInputs = Array.from(document.querySelectorAll('input[type="text"]'));
                   const updateUrlInput = urlInputs.find(input => {
-                    return input.value && input.value.includes('Updates2x-engineering/v2_0/Updates.asmx');
+                    return input.value && (
+                      input.value.includes('Updates2x-engineering/v2_0/Updates.asmx') ||
+                      input.value.includes('Updates2x/v2_0/Updates.asmx')
+                    );
                   });
                   
                   if (updateUrlInput) {
                     console.log('Found update URL input, changing default');
-                    updateUrlInput.value = 'http://services.control4.com/Updates2x-experience/v2_0/Updates.asmx';
+                    updateUrlInput.value = 'https://services.control4.com/Updates2x-experience/v2_0/Updates.asmx';
                     
                     // Trigger change event
                     const event = new Event('change', { bubbles: true });

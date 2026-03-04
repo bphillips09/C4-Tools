@@ -1,9 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:c4_tools/tools/http_client.dart';
-import 'package:xml/xml.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:c4_tools/main.dart';
-import 'package:c4_tools/models/soap_request.dart';
+import 'package:c4_tools/services/control4_updates_service.dart';
 import 'package:c4_tools/services/app_logger.dart' show appLogger;
 
 class ComposerProScreen extends StatefulWidget {
@@ -14,6 +12,7 @@ class ComposerProScreen extends StatefulWidget {
 }
 
 class _ComposerProScreenState extends State<ComposerProScreen> {
+  final Control4UpdatesService _updatesService = Control4UpdatesService();
   List<String> _versions = [];
   bool _isLoading = false;
   String? _errorMessage;
@@ -57,51 +56,14 @@ class _ComposerProScreenState extends State<ComposerProScreen> {
     try {
       final url = _urlController.text;
       appLogger.i('Fetching Composer Pro versions from: $url');
-
-      final request = GetAllVersionsRequest(
-        currentVersion: '3.3.0',
-        includeEarlierVersions: true,
-      );
-
-      final envelope = SoapEnvelope(
-        body: SoapBody(request: request),
-      );
-
-      final soapEnvelope = envelope.toXml();
-      appLogger.t('SOAP Request:\n$soapEnvelope');
-
-      final client = httpIOClient();
-      final response = await client.post(
-        Uri.parse(url),
-        headers: {
-          'Content-Type': 'text/xml; charset=utf-8',
-          'SOAPAction':
-              'http://services.control4.com/updates/v2_0/GetAllVersions',
-        },
-        body: soapEnvelope,
-      );
-
-      appLogger.t('Response Status Code: ${response.statusCode}');
-      appLogger.t('Response Headers: ${response.headers}');
-      appLogger.t('Response Body: ${response.body}');
-
-      if (response.statusCode == 200) {
-        final document = XmlDocument.parse(response.body);
-        final versions = document
-            .findAllElements('string')
-            .map((e) => e.innerText)
-            .where((version) =>
-                version.contains('Composer') && !version.contains('ComposerHE'))
-            .toList();
-        appLogger
-            .i('Found ${versions.length} Composer Pro versions: $versions');
-        return versions;
-      } else {
-        appLogger
-            .w('Failed to get versions. Status code: ${response.statusCode}');
-        throw Exception(
-            'Failed to get versions (Status: ${response.statusCode})');
-      }
+      final versions = await _updatesService.getAllVersions(endpoint: url);
+      final composerVersions = versions
+          .where((version) =>
+              version.contains('Composer') && !version.contains('ComposerHE'))
+          .toList();
+      appLogger.i(
+          'Found ${composerVersions.length} Composer Pro versions: $composerVersions');
+      return composerVersions;
     } catch (e, stackTrace) {
       appLogger.e('Error getting versions:', error: e, stackTrace: stackTrace);
       throw Exception('Error getting versions: ${e.toString()}');
@@ -117,126 +79,40 @@ class _ComposerProScreenState extends State<ComposerProScreen> {
     try {
       final url = _urlController.text;
       appLogger.i('Getting download URL for Composer Pro version: $version');
-
-      final request = GetPackagesByVersionRequest(
+      var packages = await _updatesService.getPackagesByVersion(
+        endpoint: url,
         version: version,
         certificateCommonName: 'ComposerPro',
       );
+      if (packages.isEmpty) {
+        packages = await _updatesService.getPackagesVersionsByName(
+          endpoint: url,
+          packageName: 'ComposerPro',
+          currentVersion: version,
+          device: 'x86',
+          includeEarlierVersions: false,
+        );
+      }
 
-      final envelope = SoapEnvelope(
-        body: SoapBody(request: request),
+      if (packages.isEmpty) {
+        throw Exception('No packages found for version $version');
+      }
+
+      final composerProPackage = packages.firstWhere(
+        (package) => package.name.contains('ComposerPro'),
+        orElse: () => throw Exception('Composer Pro package not found'),
       );
 
-      final soapEnvelope = envelope.toXml();
-      appLogger.t('SOAP Request for packages:\n$soapEnvelope');
+      final downloadUrl = composerProPackage.url;
+      appLogger.i('Download URL: $downloadUrl');
 
-      final client = httpIOClient();
-      final packageResponse = await client.post(
-        Uri.parse(url),
-        headers: {
-          'Content-Type': 'text/xml; charset=utf-8',
-          'SOAPAction':
-              'http://services.control4.com/updates/v2_0/GetPackagesByVersion',
-        },
-        body: soapEnvelope,
-      );
-
-      appLogger
-          .t('Package Response Status Code: ${packageResponse.statusCode}');
-      appLogger.t('Package Response Headers: ${packageResponse.headers}');
-      appLogger.t('Package Response Body: ${packageResponse.body}');
-
-      if (packageResponse.statusCode == 200) {
-        final packageDocument = XmlDocument.parse(packageResponse.body);
-        final packages = packageDocument.findAllElements('Package');
-        if (packages.isEmpty) {
-          // Try GetPackagesVersionsByName for older versions
-          final nameRequest = GetPackagesVersionsByNameRequest(
-            packageName: 'ComposerPro',
-            currentVersion: version,
-            device: 'x86',
-            includeEarlierVersions: false,
-          );
-
-          final nameEnvelope = SoapEnvelope(
-            body: SoapBody(request: nameRequest),
-          );
-
-          final nameSoapEnvelope = nameEnvelope.toXml();
-          appLogger.t('Trying GetPackagesVersionsByName:\n$nameSoapEnvelope');
-
-          final nameResponse = await client.post(
-            Uri.parse(url),
-            headers: {
-              'Content-Type': 'text/xml; charset=utf-8',
-              'SOAPAction':
-                  'http://services.control4.com/updates/v2_0/GetPackagesVersionsByName',
-            },
-            body: nameSoapEnvelope,
-          );
-
-          appLogger.t('Name Response Status Code: ${nameResponse.statusCode}');
-          appLogger.t('Name Response Headers: ${nameResponse.headers}');
-          appLogger.t('Name Response Body: ${nameResponse.body}');
-
-          if (nameResponse.statusCode == 200) {
-            final nameDocument = XmlDocument.parse(nameResponse.body);
-            final namePackages = nameDocument.findAllElements('Package');
-            if (namePackages.isEmpty) {
-              throw Exception('No packages found for version $version');
-            }
-
-            final composerProPackage = namePackages.firstWhere(
-              (package) => package
-                  .findElements('Name')
-                  .first
-                  .innerText
-                  .contains('ComposerPro'),
-              orElse: () => throw Exception('Composer Pro package not found'),
-            );
-
-            final downloadUrl =
-                composerProPackage.findElements('Url').first.innerText;
-            appLogger.i('Download URL: $downloadUrl');
-
-            if (await canLaunchUrl(Uri.parse(downloadUrl))) {
-              await launchUrl(Uri.parse(downloadUrl));
-              if (mounted) {
-                MainApp.showSnackBar('Download started for version $version');
-              }
-            } else {
-              throw Exception('Could not launch $downloadUrl');
-            }
-          } else {
-            throw Exception(
-                'Failed to get packages by name (Status: ${nameResponse.statusCode})');
-          }
-        } else {
-          final composerProPackage = packages.firstWhere(
-            (package) => package
-                .findElements('Name')
-                .first
-                .innerText
-                .contains('ComposerPro'),
-            orElse: () => throw Exception('Composer Pro package not found'),
-          );
-
-          final downloadUrl =
-              composerProPackage.findElements('Url').first.innerText;
-          appLogger.i('Download URL: $downloadUrl');
-
-          if (await canLaunchUrl(Uri.parse(downloadUrl))) {
-            await launchUrl(Uri.parse(downloadUrl));
-            if (mounted) {
-              MainApp.showSnackBar('Download started for version $version');
-            }
-          } else {
-            throw Exception('Could not launch $downloadUrl');
-          }
+      if (await canLaunchUrl(Uri.parse(downloadUrl))) {
+        await launchUrl(Uri.parse(downloadUrl));
+        if (mounted) {
+          MainApp.showSnackBar('Download started for version $version');
         }
       } else {
-        throw Exception(
-            'Failed to get packages (Status: ${packageResponse.statusCode})');
+        throw Exception('Could not launch $downloadUrl');
       }
     } catch (e) {
       setState(() {

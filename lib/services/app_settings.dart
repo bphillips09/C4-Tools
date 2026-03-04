@@ -10,6 +10,7 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:android_intent_plus/android_intent.dart';
 import 'package:open_file/open_file.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:c4_tools/services/telemetry_service.dart';
 
 class AppSettings {
   static final AppSettings _instance = AppSettings._internal();
@@ -79,6 +80,7 @@ class AppSettings {
         'defaultSshUsername': prefs.getString('default_ssh_username') ?? 'root',
         'defaultSshPassword':
             prefs.getString('default_ssh_password') ?? 't0talc0ntr0l4!',
+        'telemetryEnabled': prefs.getBool('telemetry_enabled') ?? true,
       };
 
       appLogger.d(
@@ -90,6 +92,7 @@ class AppSettings {
         'directorIPs': {},
         'defaultSshUsername': 'root',
         'defaultSshPassword': 't0talc0ntr0l4!',
+        'telemetryEnabled': true,
       };
     }
   }
@@ -106,6 +109,32 @@ class AppSettings {
     } catch (e) {
       appLogger.e('Error getting saved log level', error: e);
       return null;
+    }
+  }
+
+  Future<bool> isTelemetryEnabled() async {
+    try {
+      if (_cachedSettings.containsKey('telemetryEnabled')) {
+        return _cachedSettings['telemetryEnabled'] as bool? ?? true;
+      }
+      final prefs = await SharedPreferences.getInstance();
+      final enabled = prefs.getBool('telemetry_enabled') ?? true;
+      _cachedSettings['telemetryEnabled'] = enabled;
+      return enabled;
+    } catch (e) {
+      appLogger.e('Error getting telemetry preference', error: e);
+      return true;
+    }
+  }
+
+  Future<void> setTelemetryEnabled(bool enabled) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('telemetry_enabled', enabled);
+      _cachedSettings['telemetryEnabled'] = enabled;
+      appLogger.i('Telemetry ${enabled ? "enabled" : "disabled"}');
+    } catch (e) {
+      appLogger.e('Error setting telemetry preference', error: e);
     }
   }
 
@@ -447,88 +476,108 @@ class AppSettings {
 
   static Future<void> showSettingsMenu(BuildContext context) async {
     final currentLogLevel = AppLogger.instance.currentLogLevel;
+    bool telemetryEnabled = await instance.isTelemetryEnabled();
 
     showDialog(
       context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text('Settings'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: const Icon(Icons.folder),
-                title: const Text('Open Data Folder'),
-                onTap: () {
-                  Navigator.pop(context);
-                  AppSettings.instance.openSupportDirectory();
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.description),
-                title: const Text('Open Log File'),
-                onTap: () {
-                  Navigator.pop(context);
-                  AppSettings.instance.openLogFile();
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.list_alt),
-                title: const Text('Log Level'),
-                subtitle: Text('Current: ${logLevelToString(currentLogLevel)}'),
-                onTap: () {
-                  Navigator.pop(context);
-                  showLogLevelDialog(context);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.key),
-                title: const Text('Manage Saved Credentials'),
-                onTap: () {
-                  Navigator.pop(context);
-                  showSavedCredentials(context);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.terminal),
-                title: const Text('Default SSH Credentials'),
-                onTap: () {
-                  Navigator.pop(context);
-                  showSshCredentialsDialog(context);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.delete_forever),
-                title: const Text('Clear Data'),
-                onTap: () {
-                  Navigator.pop(context);
-                  showClearDataConfirmation(context);
-                },
-              ),
-            ],
-          ),
-          actions: [
-            FutureBuilder<PackageInfo>(
-              future: PackageInfo.fromPlatform(),
-              builder: (context, snapshot) {
-                final text =
-                    snapshot.hasData ? 'v${snapshot.data!.version}' : '';
-                return Align(
-                  alignment: Alignment.center,
-                  child: Text(
-                    text,
-                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+      builder: (BuildContext dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: const Text('Settings'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ListTile(
+                    leading: const Icon(Icons.bar_chart),
+                    title: const Text('Telemetry'),
+                    subtitle: const Text('Anonymous data'),
+                    trailing: Switch(
+                      value: telemetryEnabled,
+                      onChanged: (value) async {
+                        setState(() => telemetryEnabled = value);
+                        await instance.setTelemetryEnabled(value);
+                        await Telemetry.setEnabled(value);
+                      },
+                    ),
                   ),
-                );
-              },
-            ),
-            TextButton(
-              child: const Text('Close'),
-              onPressed: () {
-                Navigator.pop(context);
-              },
-            ),
-          ],
+                  ListTile(
+                    leading: const Icon(Icons.folder),
+                    title: const Text('Open Data Folder'),
+                    onTap: () {
+                      Navigator.pop(dialogContext);
+                      AppSettings.instance.openSupportDirectory();
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.description),
+                    title: const Text('Open Log File'),
+                    onTap: () {
+                      Navigator.pop(dialogContext);
+                      AppSettings.instance.openLogFile();
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.list_alt),
+                    title: const Text('Log Level'),
+                    subtitle:
+                        Text('Current: ${logLevelToString(currentLogLevel)}'),
+                    onTap: () {
+                      Navigator.pop(dialogContext);
+                      showLogLevelDialog(dialogContext);
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.key),
+                    title: const Text('Manage Saved Credentials'),
+                    onTap: () {
+                      Navigator.pop(dialogContext);
+                      showSavedCredentials(dialogContext);
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.terminal),
+                    title: const Text('Default SSH Credentials'),
+                    onTap: () {
+                      Navigator.pop(dialogContext);
+                      showSshCredentialsDialog(dialogContext);
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.delete_forever),
+                    title: const Text('Clear Data'),
+                    onTap: () {
+                      Navigator.pop(dialogContext);
+                      showClearDataConfirmation(dialogContext);
+                    },
+                  ),
+                ],
+              ),
+              actions: [
+                FutureBuilder<PackageInfo>(
+                  future: PackageInfo.fromPlatform(),
+                  builder: (context, snapshot) {
+                    final text =
+                        snapshot.hasData ? 'v${snapshot.data!.version}' : '';
+                    return Align(
+                      alignment: Alignment.center,
+                      child: Text(
+                        text,
+                        style:
+                            const TextStyle(fontSize: 12, color: Colors.grey),
+                      ),
+                    );
+                  },
+                ),
+                TextButton(
+                  child: const Text('Close'),
+                  onPressed: () {
+                    Navigator.pop(dialogContext);
+                  },
+                ),
+              ],
+            );
+          },
         );
       },
     );

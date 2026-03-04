@@ -65,11 +65,11 @@ class GetAllVersionsRequest extends SoapRequest {
 
 class GetPackagesByVersionRequest extends SoapRequest {
   final String version;
-  final String certificateCommonName;
+  final String? certificateCommonName;
 
   GetPackagesByVersionRequest({
     required this.version,
-    required this.certificateCommonName,
+    this.certificateCommonName,
   });
 
   @override
@@ -79,10 +79,15 @@ class GetPackagesByVersionRequest extends SoapRequest {
   String get methodName => 'GetPackagesByVersion';
 
   @override
-  Map<String, dynamic> get parameters => {
-        'version': version,
-        'certificateCommonName': certificateCommonName,
-      };
+  Map<String, dynamic> get parameters {
+    final params = <String, dynamic>{
+      'version': version,
+    };
+    if (certificateCommonName != null && certificateCommonName!.isNotEmpty) {
+      params['certificateCommonName'] = certificateCommonName;
+    }
+    return params;
+  }
 }
 
 class GetPackagesVersionsByNameRequest extends SoapRequest {

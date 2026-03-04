@@ -35,11 +35,15 @@ void main() async {
   HttpOverrides.global = WebOverrides();
   WidgetsFlutterBinding.ensureInitialized();
 
-  await Telemetry.initialize(_appID, debug: kDebugMode);
-
   await AppLogger.instance.init();
 
   await AppSettings.instance.init();
+  final telemetryEnabled = await AppSettings.instance.isTelemetryEnabled();
+  unawaited(Telemetry.configure(
+    enabled: telemetryEnabled,
+    appKey: _appID,
+    debug: kDebugMode,
+  ));
 
   final savedLogLevel = await AppSettings.instance.getSavedLogLevel();
   await AppLogger.instance.setLogLevel(savedLogLevel ?? Level.info);
